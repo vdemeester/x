@@ -189,10 +189,11 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 			}
 
 			if err != nil {
-				out.Warning("Fetch incomplete: cached %d PRs before error", len(prs))
-				return fmt.Errorf("failed to fetch PRs: %w", err)
+				out.Warning("Fetch incomplete due to error: %v", err)
+				out.Info("Using %d PRs fetched before error", len(prs))
+			} else {
+				out.Info("Fetched %d PRs", len(prs))
 			}
-			out.Info("Fetched %d PRs", len(prs))
 		} else if err != nil {
 			return fmt.Errorf("failed to fetch PRs: %w", err)
 		}
