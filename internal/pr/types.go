@@ -10,6 +10,7 @@ type PullRequest struct {
 	Title     string    `json:"title"`
 	URL       string    `json:"url"`
 	Author    string    `json:"author"`
+	BaseRef   string    `json:"baseRefName"` // Base branch (e.g., "master", "staging")
 	Labels    []string  `json:"labels"`
 	Files     []File    `json:"files"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -51,4 +52,24 @@ func (mr *MatchResult) HighestConfidence() string {
 		}
 	}
 	return highest
+}
+
+// HasBaseBranch returns true if the PR targets the specified base branch
+func (pr *PullRequest) HasBaseBranch(baseBranch string) bool {
+	return pr.BaseRef == baseBranch
+}
+
+// FilterByBaseBranch filters PRs to only those targeting the specified base branch
+func FilterByBaseBranch(prs []PullRequest, baseBranch string) []PullRequest {
+	if baseBranch == "" {
+		return prs
+	}
+
+	filtered := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.HasBaseBranch(baseBranch) {
+			filtered = append(filtered, pr)
+		}
+	}
+	return filtered
 }

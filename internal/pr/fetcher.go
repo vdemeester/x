@@ -18,14 +18,15 @@ func NewFetcher() *Fetcher {
 
 // ghPR represents a PR as returned by gh CLI
 type ghPR struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	Author    ghAuthor  `json:"author"`
-	Labels    []ghLabel `json:"labels"`
-	Files     []ghFile  `json:"files"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Number      int       `json:"number"`
+	Title       string    `json:"title"`
+	URL         string    `json:"url"`
+	Author      ghAuthor  `json:"author"`
+	BaseRefName string    `json:"baseRefName"`
+	Labels      []ghLabel `json:"labels"`
+	Files       []ghFile  `json:"files"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 type ghAuthor struct {
@@ -53,7 +54,7 @@ func (f *Fetcher) FetchNixpkgsPRs(limit int) ([]PullRequest, error) {
 		"--repo", "NixOS/nixpkgs",
 		"--state", "open",
 		"--limit", fmt.Sprintf("%d", limit),
-		"--json", "number,title,url,author,labels,files,createdAt,updatedAt",
+		"--json", "number,title,url,author,baseRefName,labels,files,createdAt,updatedAt",
 		"--order", "created",
 		"--sort", "created")
 
@@ -92,6 +93,7 @@ func (f *Fetcher) FetchNixpkgsPRs(limit int) ([]PullRequest, error) {
 			Title:     ghpr.Title,
 			URL:       ghpr.URL,
 			Author:    ghpr.Author.Login,
+			BaseRef:   ghpr.BaseRefName,
 			Labels:    labels,
 			Files:     files,
 			CreatedAt: ghpr.CreatedAt,
@@ -160,6 +162,7 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, st
 					author {
 						login
 					}
+					baseRefName
 					labels(first: 10) {
 						nodes {
 							name
@@ -209,7 +212,8 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, st
 						Author struct {
 							Login string `json:"login"`
 						} `json:"author"`
-						Labels struct {
+						BaseRefName string `json:"baseRefName"`
+						Labels      struct {
 							Nodes []struct {
 								Name string `json:"name"`
 							} `json:"nodes"`
@@ -255,6 +259,7 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, st
 			Title:     node.Title,
 			URL:       node.URL,
 			Author:    node.Author.Login,
+			BaseRef:   node.BaseRefName,
 			Labels:    labels,
 			Files:     files,
 			CreatedAt: node.CreatedAt,

@@ -9,7 +9,7 @@ func TestDependencies_HasPackage(t *testing.T) {
 	deps := &Dependencies{
 		Packages: []Package{
 			{Name: "git"},
-			{Name: "OpenSSH"},  // Test case sensitivity
+			{Name: "OpenSSH"}, // Test case sensitivity
 			{Name: "curl"},
 		},
 	}

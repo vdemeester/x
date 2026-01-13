@@ -185,6 +185,12 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 		}
 	}
 
+	// Filter PRs by base branch (default: master)
+	if flags.baseBranch != "" {
+		prs = pr.FilterByBaseBranch(prs, flags.baseBranch)
+		out.Info("Filtered to %d PRs targeting base branch '%s'", len(prs), flags.baseBranch)
+	}
+
 	// Filter PRs by user if requested
 	if flags.user != "" {
 		var filteredPRs []pr.PullRequest

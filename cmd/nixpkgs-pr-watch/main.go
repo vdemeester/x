@@ -28,6 +28,7 @@ func rootCmd() *cobra.Command {
 		outputFormat  string
 		minConfidence string
 		user          string
+		baseBranch    string
 		refreshDeps   bool
 		refreshPRs    bool
 		refresh       bool
@@ -50,6 +51,7 @@ to your system. Helps track updates and security fixes for packages you use.`,
 				outputFormat:  outputFormat,
 				minConfidence: minConfidence,
 				user:          user,
+				baseBranch:    baseBranch,
 				refreshDeps:   refreshDeps || refresh,
 				refreshPRs:    refreshPRs || refresh,
 			})
@@ -63,6 +65,7 @@ to your system. Helps track updates and security fixes for packages you use.`,
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "terminal", "Output format (terminal, json)")
 	cmd.Flags().StringVar(&minConfidence, "min-confidence", "medium", "Minimum confidence level (high, medium, low)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter PRs by author username (e.g., r-ryantm)")
+	cmd.Flags().StringVar(&baseBranch, "base-branch", "master", "Filter PRs by base branch (default: master)")
 	cmd.Flags().BoolVar(&refreshDeps, "refresh-deps", false, "Refresh dependency cache")
 	cmd.Flags().BoolVar(&refreshPRs, "refresh-prs", false, "Refresh PR cache")
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "Refresh all caches")
@@ -91,6 +94,7 @@ type watchFlags struct {
 	outputFormat  string
 	minConfidence string
 	user          string
+	baseBranch    string
 	refreshDeps   bool
 	refreshPRs    bool
 }
