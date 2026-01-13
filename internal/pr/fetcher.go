@@ -1,6 +1,7 @@
 package pr
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -41,10 +42,14 @@ type ghFile struct {
 	Deletions int    `json:"deletions"`
 }
 
-// FetchNixpkgsPRs fetches open PRs from NixOS/nixpkgs
-// PRs are returned sorted by creation date descending (newest first)
+// FetchNixpkgsPRs fetches open PRs from NixOS/nixpkgs.
+// PRs are returned sorted by creation date descending (newest first).
 func (f *Fetcher) FetchNixpkgsPRs(limit int) ([]PullRequest, error) {
-	cmd := exec.Command("gh", "pr", "list",
+	// Use context with timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
 		"--repo", "NixOS/nixpkgs",
 		"--state", "open",
 		"--limit", fmt.Sprintf("%d", limit),
@@ -97,9 +102,12 @@ func (f *Fetcher) FetchNixpkgsPRs(limit int) ([]PullRequest, error) {
 	return prs, nil
 }
 
-// FetchNixpkgsPRsWithCursor fetches PRs using cursor-based pagination
-// This allows fetching additional PRs beyond what's cached without refetching everything
-// Note: GitHub GraphQL API has a 100-record limit per request, so we batch requests
+// FetchNixpkgsPRsWithCursor fetches PRs using cursor-based pagination.
+// It automatically batches requests to respect GitHub's 100-record limit per request.
+// Returns the PRs, the cursor for the next page, and any error.
+//
+// This allows fetching additional PRs beyond what's cached without refetching everything.
+// For example, if cache has 300 PRs and you request 500, this fetches only the additional 200.
 func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string) ([]PullRequest, string, error) {
 	const maxPerRequest = 100
 
@@ -131,8 +139,12 @@ func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string) ([]Pu
 	return allPRs, currentCursor, nil
 }
 
-// fetchPRBatch fetches a single batch of PRs (max 100)
+// fetchPRBatch fetches a single batch of PRs (max 100).
 func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, string, error) {
+	// Use context with timeout to prevent hanging (30s per batch)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// Build GraphQL query
 	query := `query($limit: Int!, $after: String) {
 		repository(owner: "NixOS", name: "nixpkgs") {
@@ -167,7 +179,7 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, st
 		}
 	}`
 
-	cmd := exec.Command("gh", "api", "graphql", "-f", "query="+query,
+	cmd := exec.CommandContext(ctx, "gh", "api", "graphql", "-f", "query="+query,
 		"-F", fmt.Sprintf("limit=%d", limit))
 	if afterCursor != "" {
 		cmd.Args = append(cmd.Args, "-f", "after="+afterCursor)

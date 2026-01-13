@@ -3,6 +3,7 @@ package pr
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	"go.sbr.pm/x/internal/deps"
 )
@@ -14,6 +15,9 @@ type Matcher struct {
 	// Compiled regex patterns for package path matching
 	packagePatterns []*regexp.Regexp
 	modulePattern   *regexp.Regexp
+
+	// Cache for compiled word boundary regexes
+	regexCache sync.Map // map[string]*regexp.Regexp
 }
 
 // NewMatcher creates a new PR matcher
@@ -179,9 +183,29 @@ func (m *Matcher) isExactWordMatch(text, pkg string) bool {
 
 // matchesWithWordBoundary checks if pkg matches with word boundaries using regex
 func (m *Matcher) matchesWithWordBoundary(text, pkg string) bool {
-	// Use word boundary regex to match the package name
-	// This prevents "age" from matching "kdePackages"
-	pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(pkg) + `\b`)
+	// For packages without hyphens, check if text contains pkg followed by hyphen
+	// This prevents "openssh" from matching "openssh-client"
+	// (Go regex doesn't support negative lookahead)
+	if !strings.Contains(pkg, "-") {
+		pkgWithHyphen := strings.ToLower(pkg) + "-"
+		if strings.Contains(strings.ToLower(text), pkgWithHyphen) {
+			return false
+		}
+	}
+
+	// Check cache first
+	cacheKey := pkg
+	if cached, ok := m.regexCache.Load(cacheKey); ok {
+		return cached.(*regexp.Regexp).MatchString(text)
+	}
+
+	// Build pattern with case-insensitive flag and word boundaries
+	patternStr := `(?i)\b` + regexp.QuoteMeta(pkg) + `\b`
+	pattern := regexp.MustCompile(patternStr)
+
+	// Cache the compiled pattern
+	m.regexCache.Store(cacheKey, pattern)
+
 	return pattern.MatchString(text)
 }
 
