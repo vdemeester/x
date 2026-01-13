@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -115,23 +116,31 @@ func (f *Fetcher) FetchNixpkgsPRs(limit int) ([]PullRequest, error) {
 //
 // This allows fetching additional PRs beyond what's cached without refetching everything.
 // For example, if cache has 300 PRs and you request 500, this fetches only the additional 200.
-func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string) ([]PullRequest, string, error) {
+//
+// The baseBranch parameter filters PRs by target branch (empty string = no filter).
+func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string, baseBranch string) ([]PullRequest, string, error) {
 	const maxPerRequest = 100
 
 	var allPRs []PullRequest
 	currentCursor := afterCursor
 	remaining := limit
 
+	batchNum := 0
 	for remaining > 0 {
+		batchNum++
+
 		// Apply rate limiting with exponential backoff
-		f.rateLimiter.Wait()
+		delay := f.rateLimiter.Wait()
+		if delay > 0 {
+			fmt.Printf("⏱️  Rate limiting: waiting %v before batch %d...\n", delay.Round(time.Millisecond), batchNum)
+		}
 
 		batchSize := remaining
 		if batchSize > maxPerRequest {
 			batchSize = maxPerRequest
 		}
 
-		prs, cursor, err := f.fetchPRBatch(batchSize, currentCursor)
+		prs, cursor, err := f.fetchPRBatchWithRetry(batchSize, currentCursor, baseBranch, 3)
 		if err != nil {
 			return allPRs, currentCursor, err
 		}
@@ -151,16 +160,64 @@ func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string) ([]Pu
 	return allPRs, currentCursor, nil
 }
 
+// fetchPRBatchWithRetry fetches a batch with retry logic for transient errors
+func (f *Fetcher) fetchPRBatchWithRetry(limit int, afterCursor string, baseBranch string, maxRetries int) ([]PullRequest, string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		prs, cursor, err := f.fetchPRBatch(limit, afterCursor, baseBranch)
+		if err == nil {
+			return prs, cursor, nil
+		}
+
+		lastErr = err
+
+		// Check if error is retryable (502, 503, 504, network issues)
+		if !isRetryableError(err) {
+			return nil, "", err
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			fmt.Printf("⚠️  GitHub API error (attempt %d/%d): %v\n", attempt, maxRetries, err)
+			fmt.Printf("   Retrying in %v...\n", backoff)
+			time.Sleep(backoff)
+		}
+	}
+
+	return nil, "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// isRetryableError returns true for transient errors that should be retried
+func isRetryableError(err error) bool {
+	errStr := err.Error()
+	// HTTP 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout
+	return strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "503") ||
+		strings.Contains(errStr, "504") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "connection reset")
+}
+
 // fetchPRBatch fetches a single batch of PRs (max 100).
-func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, string, error) {
+func (f *Fetcher) fetchPRBatch(limit int, afterCursor string, baseBranch string) ([]PullRequest, string, error) {
 	// Use context with timeout to prevent hanging (30s per batch)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Build GraphQL query
-	query := `query($limit: Int!, $after: String) {
-		repository(owner: "NixOS", name: "nixpkgs") {
-			pullRequests(first: $limit, after: $after, states: OPEN, orderBy: {field: CREATED_AT, direction: DESC}) {
+	// Build GraphQL query with optional base branch filter
+	var query string
+	if baseBranch != "" {
+		query = `query($limit: Int!, $after: String, $baseRefName: String!) {
+			repository(owner: "NixOS", name: "nixpkgs") {
+				pullRequests(first: $limit, after: $after, states: OPEN, baseRefName: $baseRefName, orderBy: {field: CREATED_AT, direction: DESC}) {`
+	} else {
+		query = `query($limit: Int!, $after: String) {
+			repository(owner: "NixOS", name: "nixpkgs") {
+				pullRequests(first: $limit, after: $after, states: OPEN, orderBy: {field: CREATED_AT, direction: DESC}) {`
+	}
+	query += `
+
 				pageInfo {
 					hasNextPage
 					endCursor
@@ -196,6 +253,9 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string) ([]PullRequest, st
 		"-F", fmt.Sprintf("limit=%d", limit))
 	if afterCursor != "" {
 		cmd.Args = append(cmd.Args, "-f", "after="+afterCursor)
+	}
+	if baseBranch != "" {
+		cmd.Args = append(cmd.Args, "-f", "baseRefName="+baseBranch)
 	}
 
 	output, err := cmd.Output()

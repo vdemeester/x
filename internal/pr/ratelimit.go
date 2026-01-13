@@ -26,14 +26,17 @@ func NewRateLimiter(baseDelay time.Duration, backoffRate float64, maxDelay time.
 }
 
 // Wait blocks until the appropriate delay has passed based on request count
-func (rl *RateLimiter) Wait() {
+// Returns the delay duration (0 if no delay)
+func (rl *RateLimiter) Wait() time.Duration {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	if rl.shouldDelay() {
 		delay := rl.calculateDelay()
 		time.Sleep(delay)
+		return delay
 	}
+	return 0
 }
 
 // recordRequest increments the request counter

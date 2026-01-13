@@ -110,15 +110,20 @@ func TestRateLimiter_CalculateDelay(t *testing.T) {
 }
 
 func TestRateLimiter_Wait(t *testing.T) {
-	// Test that Wait actually delays
+	// Test that Wait actually delays and returns the delay duration
 	rl := NewRateLimiter(50*time.Millisecond, 1.5, 1*time.Second)
 	rl.recordRequest() // First request
 
 	start := time.Now()
-	rl.Wait() // Should delay for 50ms
+	delay := rl.Wait() // Should delay for 50ms
 	elapsed := time.Since(start)
 
-	// Allow some tolerance for timing
+	// Check returned delay is approximately correct
+	if delay < 40*time.Millisecond || delay > 60*time.Millisecond {
+		t.Errorf("Wait() returned delay %v, expected ~50ms", delay)
+	}
+
+	// Check actual wait time
 	minExpected := 40 * time.Millisecond
 	maxExpected := 100 * time.Millisecond
 
@@ -131,8 +136,13 @@ func TestRateLimiter_NoDelayOnFirstRequest(t *testing.T) {
 	rl := NewRateLimiter(100*time.Millisecond, 2.0, 5*time.Second)
 
 	start := time.Now()
-	rl.Wait() // First request should not delay
+	delay := rl.Wait() // First request should not delay
 	elapsed := time.Since(start)
+
+	// Should return 0 delay
+	if delay != 0 {
+		t.Errorf("Wait() on first request returned delay %v, expected 0", delay)
+	}
 
 	// Should be nearly instant
 	if elapsed > 10*time.Millisecond {

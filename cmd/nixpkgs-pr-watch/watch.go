@@ -138,7 +138,7 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 		out.Info("Cache has %d PRs, fetching %d more using cursor...", metadata.MaxLimit, deltaNeeded)
 
 		fetcher := pr.NewFetcher()
-		newPRs, newCursor, err := fetcher.FetchNixpkgsPRsWithCursor(deltaNeeded, metadata.Cursor)
+		newPRs, newCursor, err := fetcher.FetchNixpkgsPRsWithCursor(deltaNeeded, metadata.Cursor, flags.baseBranch)
 		if err != nil {
 			out.Warning("Failed to fetch additional PRs: %v", err)
 			out.Info("Using cached %d PRs instead", len(cachedPRs))
@@ -165,7 +165,7 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 		// No cache or refresh requested - fetch fresh data using cursor-based API
 		fetcher := pr.NewFetcher()
 		var cursor string
-		prs, cursor, err = fetcher.FetchNixpkgsPRsWithCursor(flags.limit, "")
+		prs, cursor, err = fetcher.FetchNixpkgsPRsWithCursor(flags.limit, "", flags.baseBranch)
 		if err != nil {
 			return fmt.Errorf("failed to fetch PRs: %w", err)
 		}
@@ -183,12 +183,6 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 		if err := prCache.Set(metadataKey, metadata); err != nil {
 			out.Warning("Failed to cache metadata: %v", err)
 		}
-	}
-
-	// Filter PRs by base branch (default: master)
-	if flags.baseBranch != "" {
-		prs = pr.FilterByBaseBranch(prs, flags.baseBranch)
-		out.Info("Filtered to %d PRs targeting base branch '%s'", len(prs), flags.baseBranch)
 	}
 
 	// Filter PRs by user if requested
