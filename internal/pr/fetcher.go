@@ -9,11 +9,16 @@ import (
 )
 
 // Fetcher fetches pull requests from GitHub
-type Fetcher struct{}
+type Fetcher struct {
+	rateLimiter *RateLimiter
+}
 
-// NewFetcher creates a new PR fetcher
+// NewFetcher creates a new PR fetcher with default rate limiting
+// Uses 100ms base delay, 1.5x exponential backoff, capped at 5s
 func NewFetcher() *Fetcher {
-	return &Fetcher{}
+	return &Fetcher{
+		rateLimiter: NewRateLimiter(100*time.Millisecond, 1.5, 5*time.Second),
+	}
 }
 
 // ghPR represents a PR as returned by gh CLI
@@ -118,6 +123,9 @@ func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string) ([]Pu
 	remaining := limit
 
 	for remaining > 0 {
+		// Apply rate limiting with exponential backoff
+		f.rateLimiter.Wait()
+
 		batchSize := remaining
 		if batchSize > maxPerRequest {
 			batchSize = maxPerRequest
@@ -127,6 +135,8 @@ func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string) ([]Pu
 		if err != nil {
 			return allPRs, currentCursor, err
 		}
+
+		f.rateLimiter.recordRequest()
 
 		allPRs = append(allPRs, prs...)
 		currentCursor = cursor
