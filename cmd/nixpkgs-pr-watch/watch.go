@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"go.sbr.pm/x/internal/cache"
@@ -98,29 +100,101 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 	merged := deps.Merge(allDeps)
 	out.Info("Total unique: %d packages, %d modules", len(merged.Packages), len(merged.Modules))
 
-	// Fetch PRs
+	// Fetch PRs using incremental cache with smart merging
 	out.Info("Fetching nixpkgs PRs (limit: %d)...", flags.limit)
 	var prs []pr.PullRequest
 
-	cacheKey := fmt.Sprintf("nixpkgs-prs-%d", flags.limit)
+	// Check cache metadata to see if we have cached PRs
+	type prCacheMetadata struct {
+		MaxLimit  int       `json:"max_limit"`
+		FetchedAt time.Time `json:"fetched_at"`
+		Cursor    string    `json:"cursor"` // GraphQL cursor for pagination
+	}
+
+	var metadata prCacheMetadata
+	var cachedPRs []pr.PullRequest
+	metadataKey := "nixpkgs-prs-metadata"
+	prsKey := "nixpkgs-prs-data"
+
+	// Load existing cache
+	hasCachedPRs := false
 	if !flags.refreshPRs {
-		if err := prCache.Get(cacheKey, &prs); err == nil && len(prs) > 0 {
-			out.Info("Loaded %d PRs from cache", len(prs))
+		if err := prCache.Get(metadataKey, &metadata); err == nil {
+			if err := prCache.Get(prsKey, &cachedPRs); err == nil && len(cachedPRs) > 0 {
+				hasCachedPRs = true
+			}
 		}
 	}
 
-	if len(prs) == 0 {
+	// Decide what to fetch
+	if hasCachedPRs && metadata.MaxLimit >= flags.limit {
+		// Cache has enough PRs, use them
+		prs = cachedPRs[:flags.limit]
+		out.Info("Loaded %d PRs from cache (cached: %d, age: %v)",
+			len(prs), len(cachedPRs), time.Since(metadata.FetchedAt).Round(time.Minute))
+	} else if hasCachedPRs && metadata.MaxLimit < flags.limit {
+		// Cache has some PRs but not enough - fetch additional PRs using cursor
+		deltaNeeded := flags.limit - metadata.MaxLimit
+		out.Info("Cache has %d PRs, fetching %d more using cursor...", metadata.MaxLimit, deltaNeeded)
+
 		fetcher := pr.NewFetcher()
-		prs, err = fetcher.FetchNixpkgsPRs(flags.limit)
+		newPRs, newCursor, err := fetcher.FetchNixpkgsPRsWithCursor(deltaNeeded, metadata.Cursor)
+		if err != nil {
+			out.Warning("Failed to fetch additional PRs: %v", err)
+			out.Info("Using cached %d PRs instead", len(cachedPRs))
+			prs = cachedPRs
+		} else {
+			// Append new PRs to cache
+			prs = append(cachedPRs, newPRs...)
+			out.Info("Fetched %d additional PRs, total: %d", len(newPRs), len(prs))
+
+			// Update cache
+			metadata = prCacheMetadata{
+				MaxLimit:  len(prs),
+				FetchedAt: time.Now(),
+				Cursor:    newCursor,
+			}
+			if err := prCache.Set(prsKey, prs); err != nil {
+				out.Warning("Failed to cache PRs: %v", err)
+			}
+			if err := prCache.Set(metadataKey, metadata); err != nil {
+				out.Warning("Failed to cache metadata: %v", err)
+			}
+		}
+	} else {
+		// No cache or refresh requested - fetch fresh data using cursor-based API
+		fetcher := pr.NewFetcher()
+		var cursor string
+		prs, cursor, err = fetcher.FetchNixpkgsPRsWithCursor(flags.limit, "")
 		if err != nil {
 			return fmt.Errorf("failed to fetch PRs: %w", err)
 		}
 		out.Info("Fetched %d PRs", len(prs))
 
-		// Cache the results
-		if err := prCache.Set(cacheKey, prs); err != nil {
+		// Update cache
+		metadata = prCacheMetadata{
+			MaxLimit:  len(prs),
+			FetchedAt: time.Now(),
+			Cursor:    cursor,
+		}
+		if err := prCache.Set(prsKey, prs); err != nil {
 			out.Warning("Failed to cache PRs: %v", err)
 		}
+		if err := prCache.Set(metadataKey, metadata); err != nil {
+			out.Warning("Failed to cache metadata: %v", err)
+		}
+	}
+
+	// Filter PRs by user if requested
+	if flags.user != "" {
+		var filteredPRs []pr.PullRequest
+		for _, p := range prs {
+			if p.Author == flags.user {
+				filteredPRs = append(filteredPRs, p)
+			}
+		}
+		out.Info("Filtered to %d PRs by user @%s", len(filteredPRs), flags.user)
+		prs = filteredPRs
 	}
 
 	// Match PRs to dependencies
@@ -267,9 +341,40 @@ func formatMatches(matches []pr.Match) string {
 		return ""
 	}
 	if len(matches) == 1 {
-		return fmt.Sprintf("%s (%s)", matches[0].Dependency, matches[0].Type)
+		icon := "📦"
+		if matches[0].Type == "module" {
+			icon = "⚙️ "
+		}
+		return fmt.Sprintf("%s %s (%s)", icon, matches[0].Dependency, matches[0].Type)
 	}
-	return fmt.Sprintf("%s and %d more", matches[0].Dependency, len(matches)-1)
+
+	// Group by type
+	pkgs := 0
+	mods := 0
+	for _, m := range matches {
+		if m.Type == "module" {
+			mods++
+		} else if m.Type == "package" {
+			pkgs++
+		}
+	}
+
+	parts := []string{}
+	if pkgs > 0 {
+		parts = append(parts, fmt.Sprintf("%d pkg%s", pkgs, pluralize(pkgs)))
+	}
+	if mods > 0 {
+		parts = append(parts, fmt.Sprintf("%d mod%s", mods, pluralize(mods)))
+	}
+
+	return fmt.Sprintf("%s (%s)", matches[0].Dependency, strings.Join(parts, ", "))
+}
+
+func pluralize(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func formatFiles(files []pr.File) string {
@@ -317,4 +422,11 @@ func countDigits(n int) int {
 		count++
 	}
 	return count
+}
+
+// sortByCreatedDesc sorts PRs by creation date descending (newest first)
+func sortByCreatedDesc(prs []pr.PullRequest) {
+	sort.Slice(prs, func(i, j int) bool {
+		return prs[i].CreatedAt.After(prs[j].CreatedAt)
+	})
 }

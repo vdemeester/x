@@ -67,6 +67,22 @@ func (e *Extractor) Extract() (Dependencies, error) {
 	// Deduplicate packages
 	deps.Packages = deduplicatePackages(deps.Packages)
 
+	// Extract NixOS modules
+	nixosModules, err := e.extractNixOSModules()
+	if err != nil {
+		// Modules might not be available, that's ok
+	} else {
+		deps.Modules = append(deps.Modules, nixosModules...)
+	}
+
+	// Extract home-manager modules
+	homeModules, err := e.extractHomeManagerModules()
+	if err != nil {
+		// Modules might not be available, that's ok
+	} else {
+		deps.Modules = append(deps.Modules, homeModules...)
+	}
+
 	return deps, nil
 }
 
@@ -136,6 +152,66 @@ func (e *Extractor) extractHomePackages() ([]Package, error) {
 	}
 
 	return nil, fmt.Errorf("no home-manager packages found")
+}
+
+// extractNixOSModules extracts systemd services from NixOS configuration
+// Note: Instead of tracking module imports (which NixOS doesn't expose easily),
+// we track systemd services that are defined, which reflects enabled services
+func (e *Extractor) extractNixOSModules() ([]ModulePath, error) {
+	// Get systemd services - this is a reliable way to see what's configured
+	flakeRef := fmt.Sprintf("%s#nixosConfigurations.%s.config.systemd.services", e.flakePath, e.hostname)
+	cmd := exec.Command("nix", "eval", flakeRef,
+		"--apply", "services: builtins.attrNames services",
+		"--json")
+
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("failed to extract systemd services: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("failed to extract systemd services: %w", err)
+	}
+
+	var serviceNames []string
+	if err := json.Unmarshal(output, &serviceNames); err != nil {
+		return nil, fmt.Errorf("failed to parse service names: %w", err)
+	}
+
+	// Extract service names that look like NixOS services
+	// Filter out systemd@ templates, system services, etc.
+	// Keep things like "docker", "nginx", "postgresql", etc.
+	modules := []ModulePath{}
+	seen := make(map[string]bool)
+
+	for _, svc := range serviceNames {
+		if svc == "" || strings.Contains(svc, "@") || strings.HasPrefix(svc, "systemd-") {
+			continue
+		}
+
+		// Extract base service name (remove suffixes like -pre, -start, etc.)
+		baseName := svc
+		for _, suffix := range []string{"-pre", "-start", "-keygen", "-wait-online", "-dispatcher", "-prune", "-clean"} {
+			baseName = strings.TrimSuffix(baseName, suffix)
+		}
+
+		if baseName != "" && !seen[baseName] {
+			seen[baseName] = true
+			modules = append(modules, ModulePath{
+				Path: fmt.Sprintf("nixos/modules/services/%s", baseName),
+				Type: "nixos",
+			})
+		}
+	}
+
+	return modules, nil
+}
+
+// extractHomeManagerModules extracts home-manager packages as a proxy for enabled programs
+// Note: Home-manager doesn't expose enabled programs easily, but packages are a good proxy
+func (e *Extractor) extractHomeManagerModules() ([]ModulePath, error) {
+	// For now, return empty since home-manager modules are harder to extract reliably
+	// and the packages already give us good coverage
+	return []ModulePath{}, nil
 }
 
 // deduplicatePackages removes duplicate packages

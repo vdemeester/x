@@ -76,6 +76,7 @@ func (m *Matcher) matchPR(pr PullRequest) MatchResult {
 
 		// Check if it's a module file
 		if m.modulePattern.MatchString(file.Path) {
+			// First try exact match
 			if m.deps.HasModulePath(file.Path) {
 				result.addMatch(Match{
 					Type:       "module",
@@ -83,6 +84,25 @@ func (m *Matcher) matchPR(pr PullRequest) MatchResult {
 					FilePath:   file.Path,
 					Confidence: "high",
 				})
+			} else {
+				// Try fuzzy match: check if file path contains any of our service names
+				// e.g., "nixos/modules/services/web-servers/nginx.nix" matches "nginx"
+				for _, mod := range m.deps.Modules {
+					// Extract service name from our synthetic path
+					// e.g., "nixos/modules/services/docker" -> "docker"
+					serviceName := extractServiceName(mod.Path)
+					if serviceName != "" && strings.Contains(file.Path, serviceName) {
+						if !result.hasMatch(mod.Path) {
+							result.addMatch(Match{
+								Type:       "module",
+								Dependency: serviceName,
+								FilePath:   file.Path,
+								Confidence: "high",
+							})
+						}
+						break
+					}
+				}
 			}
 		}
 	}
@@ -91,7 +111,20 @@ func (m *Matcher) matchPR(pr PullRequest) MatchResult {
 	titleLower := strings.ToLower(pr.Title)
 	for _, pkg := range m.deps.Packages {
 		pkgLower := strings.ToLower(pkg.Name)
-		if strings.Contains(titleLower, pkgLower) {
+
+		// Use word boundary matching to avoid false positives
+		// For short names (< 3 chars), require exact word match
+		// For longer names, use word boundaries
+		matched := false
+		if len(pkg.Name) < 3 {
+			// Short names: require exact word match (surrounded by non-alphanumeric)
+			matched = m.isExactWordMatch(titleLower, pkgLower)
+		} else {
+			// Longer names: use word boundary regex
+			matched = m.matchesWithWordBoundary(titleLower, pkgLower)
+		}
+
+		if matched {
 			// Avoid duplicates from file matching
 			if !result.hasMatch(pkg.Name) {
 				result.addMatch(Match{
@@ -115,6 +148,41 @@ func (m *Matcher) extractPackageName(path string) string {
 		}
 	}
 	return ""
+}
+
+// extractServiceName extracts service name from a module path
+// e.g., "nixos/modules/services/docker" -> "docker"
+func extractServiceName(modulePath string) string {
+	parts := strings.Split(modulePath, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+// isExactWordMatch checks if pkg appears as a complete word in text
+// Used for short package names to avoid false positives (e.g., "oc" in "ocaml")
+func (m *Matcher) isExactWordMatch(text, pkg string) bool {
+	// Check if pkg appears as a standalone word surrounded by non-alphanumeric chars
+	// or at the start/end of the text
+	words := strings.FieldsFunc(text, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_')
+	})
+
+	for _, word := range words {
+		if word == pkg {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesWithWordBoundary checks if pkg matches with word boundaries using regex
+func (m *Matcher) matchesWithWordBoundary(text, pkg string) bool {
+	// Use word boundary regex to match the package name
+	// This prevents "age" from matching "kdePackages"
+	pattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(pkg) + `\b`)
+	return pattern.MatchString(text)
 }
 
 // addMatch adds a match to the result and updates the score
