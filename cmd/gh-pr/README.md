@@ -15,11 +15,11 @@ A comprehensive GitHub Pull Request management tool written in Go, consolidating
 ## Installation
 
 ```bash
-# Build with Nix
-nix build .#gh-pr
+# Install latest version
+go install go.sbr.pm/x/cmd/gh-pr/cmd/gh-pr@latest
 
-# Or install to your profile
-nix profile install .#gh-pr
+# Or build from source
+go build -o gh-pr ./cmd/gh-pr
 ```
 
 ## Commands
@@ -451,7 +451,7 @@ Templates are cached for **7 days** (one week) by default. This significantly sp
 The tool is organized into several packages:
 
 ```
-tools/gh-pr/
+cmd/gh-pr/
 ├── cmd/gh-pr/              # Main command and subcommands
 │   ├── main.go            # Entry point and root command
 │   ├── create.go          # PR creation
@@ -465,8 +465,6 @@ tools/gh-pr/
 │   ├── cache/             # Caching with TTL support
 │   ├── output/            # Colored terminal output
 │   └── templates/         # Template discovery and management
-├── go.mod
-├── default.nix            # Nix package definition
 └── README.md
 ```
 

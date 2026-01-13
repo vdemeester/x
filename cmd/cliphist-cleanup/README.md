@@ -37,12 +37,11 @@ cliphist-cleanup '^password:' '^token:'
 ## Building
 
 ```bash
-nix build .#cliphist-cleanup
+go build -o cliphist-cleanup
 ```
 
 ## Installing
 
-Add to your home-manager packages or install directly:
 ```bash
-nix profile install .#cliphist-cleanup
+go install go.sbr.pm/x/cmd/cliphist-cleanup@latest
 ```
