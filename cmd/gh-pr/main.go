@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"go.sbr.pm/x/cmd/gh-pr/internal/output"
+	"go.sbr.pm/x/internal/output"
 )
 
 var version = "0.1.0"

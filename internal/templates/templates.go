@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"go.sbr.pm/x/cmd/gh-pr/internal/cache"
+	"go.sbr.pm/x/internal/cache"
 )
 
 // Template represents a PR template file
@@ -26,7 +26,7 @@ type Finder struct {
 
 // NewFinder creates a new template finder
 func NewFinder() (*Finder, error) {
-	c, err := cache.New(cache.DefaultTTL)
+	c, err := cache.New(cache.DefaultTTL, "gh-pr")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}

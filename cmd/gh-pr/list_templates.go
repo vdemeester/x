@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"go.sbr.pm/x/cmd/gh-pr/internal/output"
-	"go.sbr.pm/x/cmd/gh-pr/internal/templates"
+	"go.sbr.pm/x/internal/output"
+	"go.sbr.pm/x/internal/templates"
 )
 
 func listTemplatesCmd(out *output.Writer) *cobra.Command {

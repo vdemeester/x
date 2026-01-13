@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"go.sbr.pm/x/cmd/gh-pr/internal/output"
+	"go.sbr.pm/x/internal/output"
 )
 
 // Resolver handles merge conflict resolution

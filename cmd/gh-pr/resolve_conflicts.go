@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"go.sbr.pm/x/cmd/gh-pr/internal/conflicts"
-	"go.sbr.pm/x/cmd/gh-pr/internal/output"
+	"go.sbr.pm/x/internal/conflicts"
+	"go.sbr.pm/x/internal/output"
 )
 
 func resolveConflictsCmd(out *output.Writer) *cobra.Command {
