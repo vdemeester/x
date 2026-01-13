@@ -139,49 +139,62 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 
 		fetcher := pr.NewFetcher()
 		newPRs, newCursor, err := fetcher.FetchNixpkgsPRsWithCursor(deltaNeeded, metadata.Cursor, flags.baseBranch)
-		if err != nil {
-			out.Warning("Failed to fetch additional PRs: %v", err)
-			out.Info("Using cached %d PRs instead", len(cachedPRs))
-			prs = cachedPRs
-		} else {
-			// Append new PRs to cache
-			prs = append(cachedPRs, newPRs...)
-			out.Info("Fetched %d additional PRs, total: %d", len(newPRs), len(prs))
 
-			// Update cache
+		// Merge cached PRs with any new PRs we got (even if there was an error)
+		prs = append(cachedPRs, newPRs...)
+
+		// Update cache with combined results if we got new data
+		if len(newPRs) > 0 {
 			metadata = prCacheMetadata{
 				MaxLimit:  len(prs),
 				FetchedAt: time.Now(),
 				Cursor:    newCursor,
 			}
-			if err := prCache.Set(prsKey, prs); err != nil {
-				out.Warning("Failed to cache PRs: %v", err)
+			if cacheErr := prCache.Set(prsKey, prs); cacheErr != nil {
+				out.Warning("Failed to cache PRs: %v", cacheErr)
 			}
-			if err := prCache.Set(metadataKey, metadata); err != nil {
-				out.Warning("Failed to cache metadata: %v", err)
+			if cacheErr := prCache.Set(metadataKey, metadata); cacheErr != nil {
+				out.Warning("Failed to cache metadata: %v", cacheErr)
 			}
+		}
+
+		if err != nil {
+			out.Warning("Failed to fetch additional PRs: %v", err)
+			if len(newPRs) > 0 {
+				out.Info("Cached partial results: %d previous + %d new = %d total PRs", len(cachedPRs), len(newPRs), len(prs))
+			} else {
+				out.Info("Using cached %d PRs instead", len(cachedPRs))
+			}
+		} else {
+			out.Info("Fetched %d additional PRs, total: %d", len(newPRs), len(prs))
 		}
 	} else {
 		// No cache or refresh requested - fetch fresh data using cursor-based API
 		fetcher := pr.NewFetcher()
 		var cursor string
 		prs, cursor, err = fetcher.FetchNixpkgsPRsWithCursor(flags.limit, "", flags.baseBranch)
-		if err != nil {
-			return fmt.Errorf("failed to fetch PRs: %w", err)
-		}
-		out.Info("Fetched %d PRs", len(prs))
 
-		// Update cache
-		metadata = prCacheMetadata{
-			MaxLimit:  len(prs),
-			FetchedAt: time.Now(),
-			Cursor:    cursor,
-		}
-		if err := prCache.Set(prsKey, prs); err != nil {
-			out.Warning("Failed to cache PRs: %v", err)
-		}
-		if err := prCache.Set(metadataKey, metadata); err != nil {
-			out.Warning("Failed to cache metadata: %v", err)
+		// Cache partial results even if there was an error
+		if len(prs) > 0 {
+			metadata = prCacheMetadata{
+				MaxLimit:  len(prs),
+				FetchedAt: time.Now(),
+				Cursor:    cursor,
+			}
+			if cacheErr := prCache.Set(prsKey, prs); cacheErr != nil {
+				out.Warning("Failed to cache PRs: %v", cacheErr)
+			}
+			if cacheErr := prCache.Set(metadataKey, metadata); cacheErr != nil {
+				out.Warning("Failed to cache metadata: %v", cacheErr)
+			}
+
+			if err != nil {
+				out.Warning("Fetch incomplete: cached %d PRs before error", len(prs))
+				return fmt.Errorf("failed to fetch PRs: %w", err)
+			}
+			out.Info("Fetched %d PRs", len(prs))
+		} else if err != nil {
+			return fmt.Errorf("failed to fetch PRs: %w", err)
 		}
 	}
 
