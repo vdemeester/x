@@ -226,12 +226,15 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 
 	out.Info("Found %d matching PRs", len(filtered))
 
+	// Sort results
+	sortResults(filtered, flags.sortBy)
+
 	// Output results
 	switch flags.outputFormat {
 	case "json":
 		return outputJSON(filtered, merged, hostsToAnalyze)
 	default:
-		return outputTerminal(out, filtered, merged, hostsToAnalyze)
+		return outputTerminal(out, filtered, merged, hostsToAnalyze, flags)
 	}
 }
 
@@ -270,7 +273,7 @@ func outputJSON(results []pr.MatchResult, deps *deps.Dependencies, hosts []strin
 	return encoder.Encode(output)
 }
 
-func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dependencies, hosts []string) error {
+func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dependencies, hosts []string, flags watchFlags) error {
 	out.Println("")
 	out.Println("┌─────────────────────────────────────────────────────────────────────────────┐")
 	out.Println("│ NixOS/nixpkgs PRs matching your configuration                              │")
@@ -304,7 +307,7 @@ func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dep
 		out.Println("════════════════════════════════════════════════════════════════════════════════")
 		out.Println("")
 		for _, r := range highConf {
-			printMatch(out, r)
+			printMatch(out, r, flags.compact)
 		}
 	}
 
@@ -313,7 +316,7 @@ func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dep
 		out.Println("════════════════════════════════════════════════════════════════════════════════")
 		out.Println("")
 		for _, r := range medConf {
-			printMatch(out, r)
+			printMatch(out, r, flags.compact)
 		}
 	}
 
@@ -322,24 +325,32 @@ func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dep
 		out.Println("════════════════════════════════════════════════════════════════════════════════")
 		out.Println("")
 		for _, r := range lowConf {
-			printMatch(out, r)
+			printMatch(out, r, flags.compact)
 		}
 	}
 
 	return nil
 }
 
-func printMatch(out *output.Writer, r pr.MatchResult) {
-	out.Success("[#%d] %s", r.PR.Number, r.PR.Title)
-	out.Println("  → Matches: %s", formatMatches(r.Matches))
-	if len(r.PR.Files) > 0 {
-		out.Println("  │ Files: %s", formatFiles(r.PR.Files))
+func printMatch(out *output.Writer, r pr.MatchResult, compact bool) {
+	if compact {
+		// Compact mode: 2 lines
+		out.Success("[#%d] %s (created: %s)", r.PR.Number, r.PR.Title, formatDate(r.PR.CreatedAt))
+		out.Println("  %s - %s", formatMatches(r.Matches), r.PR.URL)
+	} else {
+		// Full mode: include date and all details
+		out.Success("[#%d] %s", r.PR.Number, r.PR.Title)
+		out.Println("  → Matches: %s", formatMatches(r.Matches))
+		if len(r.PR.Files) > 0 {
+			out.Println("  │ Files: %s", formatFiles(r.PR.Files))
+		}
+		if len(r.PR.Labels) > 0 {
+			out.Println("  │ Labels: %s", formatLabels(r.PR.Labels))
+		}
+		out.Println("  │ Created: %s | Updated: %s", formatDate(r.PR.CreatedAt), formatDate(r.PR.UpdatedAt))
+		out.Println("  │ Author: @%s", r.PR.Author)
+		out.Println("  └ %s", r.PR.URL)
 	}
-	if len(r.PR.Labels) > 0 {
-		out.Println("  │ Labels: %s", formatLabels(r.PR.Labels))
-	}
-	out.Println("  │ Author: @%s", r.PR.Author)
-	out.Println("  └ %s", r.PR.URL)
 	out.Println("")
 }
 
@@ -411,6 +422,36 @@ func formatLabels(labels []string) string {
 	return fmt.Sprintf("%s, %s, and %d more", labels[0], labels[1], len(labels)-2)
 }
 
+func formatDate(t time.Time) string {
+	now := time.Now()
+	diff := now.Sub(t)
+
+	// Less than a day
+	if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		if hours < 1 {
+			minutes := int(diff.Minutes())
+			return fmt.Sprintf("%dm ago", minutes)
+		}
+		return fmt.Sprintf("%dh ago", hours)
+	}
+
+	// Less than a week
+	if diff < 7*24*time.Hour {
+		days := int(diff.Hours() / 24)
+		return fmt.Sprintf("%dd ago", days)
+	}
+
+	// Less than a month
+	if diff < 30*24*time.Hour {
+		weeks := int(diff.Hours() / 24 / 7)
+		return fmt.Sprintf("%dw ago", weeks)
+	}
+
+	// Otherwise show the date
+	return t.Format("2006-01-02")
+}
+
 func pad(n int) string {
 	if n <= 0 {
 		return ""
@@ -443,4 +484,20 @@ func sortByCreatedDesc(prs []pr.PullRequest) {
 	sort.Slice(prs, func(i, j int) bool {
 		return prs[i].CreatedAt.After(prs[j].CreatedAt)
 	})
+}
+
+// sortResults sorts match results by the specified field
+func sortResults(results []pr.MatchResult, sortBy string) {
+	switch sortBy {
+	case "updated":
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].PR.UpdatedAt.After(results[j].PR.UpdatedAt)
+		})
+	case "created":
+		fallthrough
+	default:
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].PR.CreatedAt.After(results[j].PR.CreatedAt)
+		})
+	}
 }

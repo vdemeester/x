@@ -32,6 +32,8 @@ func rootCmd() *cobra.Command {
 		refreshDeps   bool
 		refreshPRs    bool
 		refresh       bool
+		compact       bool
+		sortBy        string
 	)
 
 	cmd := &cobra.Command{
@@ -54,6 +56,8 @@ to your system. Helps track updates and security fixes for packages you use.`,
 				baseBranch:    baseBranch,
 				refreshDeps:   refreshDeps || refresh,
 				refreshPRs:    refreshPRs || refresh,
+				compact:       compact,
+				sortBy:        sortBy,
 			})
 		},
 	}
@@ -69,6 +73,8 @@ to your system. Helps track updates and security fixes for packages you use.`,
 	cmd.Flags().BoolVar(&refreshDeps, "refresh-deps", false, "Refresh dependency cache")
 	cmd.Flags().BoolVar(&refreshPRs, "refresh-prs", false, "Refresh PR cache")
 	cmd.Flags().BoolVar(&refresh, "refresh", false, "Refresh all caches")
+	cmd.Flags().BoolVar(&compact, "compact", false, "Compact output (2 lines per PR)")
+	cmd.Flags().StringVar(&sortBy, "sort", "created", "Sort PRs by: created, updated")
 
 	cmd.AddCommand(versionCmd())
 	cmd.AddCommand(cacheCmd(out))
@@ -97,4 +103,6 @@ type watchFlags struct {
 	baseBranch    string
 	refreshDeps   bool
 	refreshPRs    bool
+	compact       bool
+	sortBy        string
 }
