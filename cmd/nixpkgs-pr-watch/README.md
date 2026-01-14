@@ -14,7 +14,11 @@ Filter NixOS/nixpkgs pull requests based on packages and modules used in your Ni
   - PR titles (medium confidence): "git: 2.43.0 -> 2.44.0" → git
   - Module paths (high confidence): NixOS/home-manager modules
 - **Confidence Scoring**: Filter by confidence level (high, medium, low)
-- **Caching**: Smart caching with TTL (24h for deps, 6h for PRs)
+- **Status Highlighting**: PRs with merge conflicts or build failures are visually highlighted
+- **Flexible Filtering**: Filter by author, base branch, or confidence level
+- **Sorting Options**: Sort by creation or update time
+- **Display Modes**: Full detail or compact (2-line) output
+- **Caching**: Smart incremental caching with TTL (24h for deps, 6h for PRs)
 - **Multiple Output Formats**: Terminal (colored) or JSON
 - **Multi-Host Support**: Analyze single host or all hosts in your flake
 
@@ -59,6 +63,22 @@ nixpkgs-pr-watch --min-confidence high
 
 # Limit number of PRs fetched
 nixpkgs-pr-watch --limit 100
+
+# Filter by author (e.g., for r-ryantm bot updates)
+nixpkgs-pr-watch --user r-ryantm
+
+# Filter by base branch
+nixpkgs-pr-watch --base-branch staging
+```
+
+### Display Options
+
+```bash
+# Compact output (2 lines per PR)
+nixpkgs-pr-watch --compact
+
+# Sort by update time instead of creation time
+nixpkgs-pr-watch --sort updated
 ```
 
 ### Output Formats
@@ -95,6 +115,8 @@ nixpkgs-pr-watch cache info
 
 ## Example Output
 
+### Full Output (default)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ NixOS/nixpkgs PRs matching your configuration                              │
@@ -109,15 +131,27 @@ HIGH CONFIDENCE MATCHES (2)
   → Matches: oci-cli (package)
   │ Files: pkgs/by-name/oc/oci-cli/package.nix (+2/-2)
   │ Labels: 10.rebuild-linux: 1-10, merge-bot eligible
+  │ Created: 2d ago | Updated: 1d ago
   │ Author: @r-ryantm
   └ https://github.com/NixOS/nixpkgs/pull/479757
 
-[#479713] GNOME updates 2026-01-13
+[#479713] GNOME updates 2026-01-13 ⚠️  CONFLICTS
   → Matches: nautilus (package)
   │ Files: pkgs/by-name/eo/eog/package.nix and 4 more files
   │ Labels: 10.rebuild-linux: 11-100
+  │ Created: 3d ago | Updated: 2d ago
   │ Author: @bobby285271
   └ https://github.com/NixOS/nixpkgs/pull/479713
+```
+
+### Compact Output (`--compact`)
+
+```
+[#479757] oci-cli: 3.71.4 -> 3.72.0 (created: 2d ago)
+  📦 oci-cli (package) by @r-ryantm - https://github.com/NixOS/nixpkgs/pull/479757
+
+[#479713] GNOME updates 2026-01-13 (created: 3d ago) ⚠️  CONFLICTS
+  📦 nautilus (package) by @bobby285271 - https://github.com/NixOS/nixpkgs/pull/479713
 ```
 
 ## How It Works

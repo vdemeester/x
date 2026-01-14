@@ -582,7 +582,7 @@ MIT
 - [x] Full implementation of `resolve-conflicts` command
 - [x] Remote repository template discovery
 - [x] Batch operations on multiple PRs (comment command)
-- [ ] Interactive PR selection with `fzf` integration for conflict resolution
+- [x] Interactive PR selection with `fzf` integration for conflict resolution
 - [ ] Support for PR templates in multiple formats (YAML, JSON)
 - [ ] Custom cache TTL configuration
 - [ ] Integration with review tools
