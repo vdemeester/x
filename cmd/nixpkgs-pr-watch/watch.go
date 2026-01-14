@@ -336,7 +336,7 @@ func printMatch(out *output.Writer, r pr.MatchResult, compact bool) {
 	if compact {
 		// Compact mode: 2 lines
 		out.Success("[#%d] %s (created: %s)", r.PR.Number, r.PR.Title, formatDate(r.PR.CreatedAt))
-		out.Println("  %s - %s", formatMatches(r.Matches), r.PR.URL)
+		out.Println("  %s by @%s - %s", formatMatches(r.Matches), r.PR.Author, r.PR.URL)
 	} else {
 		// Full mode: include date and all details
 		out.Success("[#%d] %s", r.PR.Number, r.PR.Title)
