@@ -6,15 +6,17 @@ import (
 
 // PullRequest represents a GitHub pull request
 type PullRequest struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	Author    string    `json:"author"`
-	BaseRef   string    `json:"baseRefName"` // Base branch (e.g., "master", "staging")
-	Labels    []string  `json:"labels"`
-	Files     []File    `json:"files"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Number          int       `json:"number"`
+	Title           string    `json:"title"`
+	URL             string    `json:"url"`
+	Author          string    `json:"author"`
+	BaseRef         string    `json:"baseRefName"`   // Base branch (e.g., "master", "staging")
+	Mergeable       string    `json:"mergeable"`     // MERGEABLE, CONFLICTING, UNKNOWN
+	StatusState     string    `json:"statusState"`   // SUCCESS, FAILURE, PENDING, ERROR, EXPECTED
+	Labels          []string  `json:"labels"`
+	Files           []File    `json:"files"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // File represents a file changed in a PR
@@ -57,6 +59,21 @@ func (mr *MatchResult) HighestConfidence() string {
 // HasBaseBranch returns true if the PR targets the specified base branch
 func (pr *PullRequest) HasBaseBranch(baseBranch string) bool {
 	return pr.BaseRef == baseBranch
+}
+
+// HasConflicts returns true if the PR has merge conflicts
+func (pr *PullRequest) HasConflicts() bool {
+	return pr.Mergeable == "CONFLICTING"
+}
+
+// HasBuildFailure returns true if the PR has a failed status check
+func (pr *PullRequest) HasBuildFailure() bool {
+	return pr.StatusState == "FAILURE" || pr.StatusState == "ERROR"
+}
+
+// NeedsAttention returns true if the PR has conflicts or build failures
+func (pr *PullRequest) NeedsAttention() bool {
+	return pr.HasConflicts() || pr.HasBuildFailure()
 }
 
 // FilterByBaseBranch filters PRs to only those targeting the specified base branch

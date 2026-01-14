@@ -95,15 +95,17 @@ func (f *Fetcher) FetchNixpkgsPRs(limit int) ([]PullRequest, error) {
 		}
 
 		prs[i] = PullRequest{
-			Number:    ghpr.Number,
-			Title:     ghpr.Title,
-			URL:       ghpr.URL,
-			Author:    ghpr.Author.Login,
-			BaseRef:   ghpr.BaseRefName,
-			Labels:    labels,
-			Files:     files,
-			CreatedAt: ghpr.CreatedAt,
-			UpdatedAt: ghpr.UpdatedAt,
+			Number:      ghpr.Number,
+			Title:       ghpr.Title,
+			URL:         ghpr.URL,
+			Author:      ghpr.Author.Login,
+			BaseRef:     ghpr.BaseRefName,
+			Mergeable:   "",       // Not available in simple gh pr list
+			StatusState: "",       // Not available in simple gh pr list
+			Labels:      labels,
+			Files:       files,
+			CreatedAt:   ghpr.CreatedAt,
+			UpdatedAt:   ghpr.UpdatedAt,
 		}
 	}
 
@@ -230,6 +232,16 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string, baseBranch string)
 						login
 					}
 					baseRefName
+					mergeable
+					commits(last: 1) {
+						nodes {
+							commit {
+								statusCheckRollup {
+									state
+								}
+							}
+						}
+					}
 					labels(first: 10) {
 						nodes {
 							name
@@ -276,14 +288,24 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string, baseBranch string)
 						EndCursor   string `json:"endCursor"`
 					} `json:"pageInfo"`
 					Nodes []struct {
-						Number int    `json:"number"`
-						Title  string `json:"title"`
-						URL    string `json:"url"`
-						Author struct {
+						Number      int    `json:"number"`
+						Title       string `json:"title"`
+						URL         string `json:"url"`
+						Author      struct {
 							Login string `json:"login"`
 						} `json:"author"`
 						BaseRefName string `json:"baseRefName"`
-						Labels      struct {
+						Mergeable   string `json:"mergeable"`
+						Commits     struct {
+							Nodes []struct {
+								Commit struct {
+									StatusCheckRollup struct {
+										State string `json:"state"`
+									} `json:"statusCheckRollup"`
+								} `json:"commit"`
+							} `json:"nodes"`
+						} `json:"commits"`
+						Labels struct {
 							Nodes []struct {
 								Name string `json:"name"`
 							} `json:"nodes"`
@@ -324,16 +346,24 @@ func (f *Fetcher) fetchPRBatch(limit int, afterCursor string, baseBranch string)
 			}
 		}
 
+		// Extract status check state from the latest commit
+		statusState := ""
+		if len(node.Commits.Nodes) > 0 && node.Commits.Nodes[0].Commit.StatusCheckRollup.State != "" {
+			statusState = node.Commits.Nodes[0].Commit.StatusCheckRollup.State
+		}
+
 		prs[i] = PullRequest{
-			Number:    node.Number,
-			Title:     node.Title,
-			URL:       node.URL,
-			Author:    node.Author.Login,
-			BaseRef:   node.BaseRefName,
-			Labels:    labels,
-			Files:     files,
-			CreatedAt: node.CreatedAt,
-			UpdatedAt: node.UpdatedAt,
+			Number:      node.Number,
+			Title:       node.Title,
+			URL:         node.URL,
+			Author:      node.Author.Login,
+			BaseRef:     node.BaseRefName,
+			Mergeable:   node.Mergeable,
+			StatusState: statusState,
+			Labels:      labels,
+			Files:       files,
+			CreatedAt:   node.CreatedAt,
+			UpdatedAt:   node.UpdatedAt,
 		}
 	}
 

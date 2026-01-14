@@ -333,13 +333,24 @@ func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dep
 }
 
 func printMatch(out *output.Writer, r pr.MatchResult, compact bool) {
+	// Build status indicators
+	statusIndicators := formatStatusIndicators(r.PR)
+
 	if compact {
 		// Compact mode: 2 lines
-		out.Success("[#%d] %s (created: %s)", r.PR.Number, r.PR.Title, formatDate(r.PR.CreatedAt))
+		titleLine := fmt.Sprintf("[#%d] %s (created: %s)", r.PR.Number, r.PR.Title, formatDate(r.PR.CreatedAt))
+		if statusIndicators != "" {
+			titleLine = fmt.Sprintf("%s %s", titleLine, statusIndicators)
+		}
+		out.Success(titleLine)
 		out.Println("  %s by @%s - %s", formatMatches(r.Matches), r.PR.Author, r.PR.URL)
 	} else {
 		// Full mode: include date and all details
-		out.Success("[#%d] %s", r.PR.Number, r.PR.Title)
+		titleLine := fmt.Sprintf("[#%d] %s", r.PR.Number, r.PR.Title)
+		if statusIndicators != "" {
+			titleLine = fmt.Sprintf("%s %s", titleLine, statusIndicators)
+		}
+		out.Success(titleLine)
 		out.Println("  → Matches: %s", formatMatches(r.Matches))
 		if len(r.PR.Files) > 0 {
 			out.Println("  │ Files: %s", formatFiles(r.PR.Files))
@@ -352,6 +363,24 @@ func printMatch(out *output.Writer, r pr.MatchResult, compact bool) {
 		out.Println("  └ %s", r.PR.URL)
 	}
 	out.Println("")
+}
+
+func formatStatusIndicators(pr pr.PullRequest) string {
+	var indicators []string
+
+	if pr.HasConflicts() {
+		indicators = append(indicators, "⚠️  CONFLICTS")
+	}
+
+	if pr.HasBuildFailure() {
+		indicators = append(indicators, "❌ BUILD FAILED")
+	}
+
+	if len(indicators) == 0 {
+		return ""
+	}
+
+	return strings.Join(indicators, " ")
 }
 
 func formatHosts(hosts []string) string {
