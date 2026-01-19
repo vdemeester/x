@@ -1,5 +1,7 @@
 # x
 
+![Gemini-generated image representing experimentation](image.png)
+
 Various experimental tools, trinkets, and experiments.
 
 **Target audience:** One (me).
