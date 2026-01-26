@@ -33,6 +33,7 @@ and conflict resolution in a single command-line interface.`,
 
 	cmd.AddCommand(versionCmd())
 	cmd.AddCommand(createCmd(out))
+	cmd.AddCommand(reviewCmd(out))
 	cmd.AddCommand(listTemplatesCmd(out))
 	cmd.AddCommand(restartFailedCmd(out))
 	cmd.AddCommand(resolveConflictsCmd(out))
