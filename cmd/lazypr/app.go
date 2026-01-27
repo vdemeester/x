@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -29,6 +30,7 @@ type Model struct {
 	repo      *lazypr.RepoRef // For loading all PRs from a repo
 	repoLimit int             // Limit when loading from repo
 	cursor    int
+	selected  map[int]bool // Selected PR indices for multi-select
 
 	// Layout
 	width       int
@@ -46,9 +48,10 @@ type Model struct {
 	statusTime int    // Ticks until status clears
 
 	// Input modal state
-	inputMode    bool            // Whether input modal is active
-	inputAction  string          // "comment" or "changes"
-	inputModel   textinput.Model // Input field for modal
+	inputMode    bool              // Whether input modal is active
+	inputAction  string            // "comment" or "changes"
+	inputModel   textinput.Model   // Input field for modal
+	inputPRs     []lazypr.PRDetail // PRs to act on when input is submitted
 
 	// Help screen
 	showHelp bool
@@ -67,11 +70,15 @@ type prErrorMsg struct {
 	err error
 }
 
+// execDoneMsg is sent when an external process completes.
+type execDoneMsg struct{}
+
 // NewModel creates a new model with the given PR references.
 func NewModel(refs []lazypr.PRRef) Model {
 	return Model{
 		refs:        refs,
 		cursor:      0,
+		selected:    make(map[int]bool),
 		focusedPane: paneList,
 		loading:     true,
 		styles:      NewStyles(DefaultTheme()),
@@ -84,6 +91,7 @@ func NewRepoModel(repo lazypr.RepoRef, limit int) Model {
 		repo:        &repo,
 		repoLimit:   limit,
 		cursor:      0,
+		selected:    make(map[int]bool),
 		focusedPane: paneList,
 		loading:     true,
 		styles:      NewStyles(DefaultTheme()),
@@ -173,6 +181,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateDetailViewport()
 			}
 
+		// Selection
+		case " ":
+			if m.focusedPane == paneList && len(m.prs) > 0 {
+				if m.selected[m.cursor] {
+					delete(m.selected, m.cursor)
+				} else {
+					m.selected[m.cursor] = true
+				}
+				// Move to next item after selection
+				if m.cursor < len(m.prs)-1 {
+					m.cursor++
+					m.updateDetailViewport()
+				}
+			}
+
+		case "v":
+			// Toggle select all / clear all
+			if len(m.prs) > 0 {
+				if len(m.selected) == len(m.prs) {
+					// All selected, clear
+					m.selected = make(map[int]bool)
+				} else {
+					// Select all
+					for i := range m.prs {
+						m.selected[i] = true
+					}
+				}
+			}
+
 		// Switch panes
 		case "tab":
 			m.focusedPane = (m.focusedPane + 1) % 2
@@ -210,37 +247,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.openInBrowser()
 			}
 
+		case "d":
+			if len(m.prs) > 0 && m.cursor < len(m.prs) {
+				return m, m.showDiff()
+			}
+
 		case "y":
 			if len(m.prs) > 0 && m.cursor < len(m.prs) {
 				return m, copyToClipboard(m.prs[m.cursor].URL)
 			}
 
 		case "a":
-			if len(m.prs) > 0 && m.cursor < len(m.prs) {
-				return m, approvePR(m.prs[m.cursor])
+			prs := m.getSelectedPRs()
+			if len(prs) > 0 {
+				m.selected = make(map[int]bool) // Clear selection after action
+				return m, approvePRs(prs)
 			}
 
 		case "c":
-			if len(m.prs) > 0 && m.cursor < len(m.prs) {
+			prs := m.getSelectedPRs()
+			if len(prs) > 0 {
 				m.inputMode = true
 				m.inputAction = "comment"
+				m.inputPRs = prs
 				m.inputModel = textinput.New()
-				m.inputModel.Placeholder = "Enter your comment..."
+				if len(prs) > 1 {
+					m.inputModel.Placeholder = fmt.Sprintf("Comment for %d PRs...", len(prs))
+				} else {
+					m.inputModel.Placeholder = "Enter your comment..."
+				}
 				m.inputModel.Focus()
 				m.inputModel.CharLimit = 1000
 				m.inputModel.Width = 60
+				m.selected = make(map[int]bool) // Clear selection
 				return m, textinput.Blink
 			}
 
 		case "r":
-			if len(m.prs) > 0 && m.cursor < len(m.prs) {
+			prs := m.getSelectedPRs()
+			if len(prs) > 0 {
 				m.inputMode = true
 				m.inputAction = "changes"
+				m.inputPRs = prs
 				m.inputModel = textinput.New()
-				m.inputModel.Placeholder = "Enter reason for requesting changes..."
+				if len(prs) > 1 {
+					m.inputModel.Placeholder = fmt.Sprintf("Request changes for %d PRs...", len(prs))
+				} else {
+					m.inputModel.Placeholder = "Enter reason for requesting changes..."
+				}
 				m.inputModel.Focus()
 				m.inputModel.CharLimit = 1000
 				m.inputModel.Width = 60
+				m.selected = make(map[int]bool) // Clear selection
 				return m, textinput.Blink
 			}
 
@@ -280,6 +338,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case actionResult:
 		m.statusMsg = msg.message
 		m.statusTime = 30 // Show for ~3 seconds (assuming 10 ticks/sec)
+
+	case execDoneMsg:
+		// Force a full redraw after returning from external process
+		m.updateDetailViewport()
+		return m, tea.ClearScreen
+
+	case diffErrorMsg:
+		m.statusMsg = msg.message
+		m.statusTime = 50 // Show for ~5 seconds
 	}
 
 	// Update viewport
@@ -307,13 +374,22 @@ func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "enter":
 			if m.inputModel.Value() != "" {
-				pr := m.prs[m.cursor]
 				message := m.inputModel.Value()
+				prs := m.inputPRs
+				action := m.inputAction
 				m.inputMode = false
-				return m, m.executeInputAction(pr, m.inputAction, message)
+				m.inputPRs = nil
+
+				switch action {
+				case "comment":
+					return m, commentPRs(prs, message)
+				case "changes":
+					return m, requestChangesPRs(prs, message)
+				}
 			}
 		case "esc", "ctrl+c":
 			m.inputMode = false
+			m.inputPRs = nil
 			return m, nil
 		}
 	case actionResult:
@@ -326,28 +402,6 @@ func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.inputModel, cmd = m.inputModel.Update(msg)
 	return m, cmd
-}
-
-func (m Model) executeInputAction(pr lazypr.PRDetail, action, message string) tea.Cmd {
-	return func() tea.Msg {
-		repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
-		prNum := fmt.Sprintf("%d", pr.Number)
-
-		var args []string
-		switch action {
-		case "comment":
-			args = []string{"pr", "comment", prNum, "-R", repo, "--body", message}
-		case "changes":
-			args = []string{"pr", "review", prNum, "-R", repo, "--request-changes", "--body", message}
-		}
-
-		cmd := exec.Command("gh", args...)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return actionResult{success: false, message: fmt.Sprintf("Error: %v\n%s", err, output)}
-		}
-		return actionResult{success: true, message: fmt.Sprintf("Action completed: %s on PR #%d", action, pr.Number)}
-	}
 }
 
 func (m Model) detailPaneDimensions() (int, int) {
@@ -370,6 +424,24 @@ func (m Model) detailPaneDimensions() (int, int) {
 	return contentWidth, contentHeight
 }
 
+// getSelectedPRs returns the selected PRs, or the current PR if none selected.
+func (m Model) getSelectedPRs() []lazypr.PRDetail {
+	if len(m.selected) > 0 {
+		prs := make([]lazypr.PRDetail, 0, len(m.selected))
+		for idx := range m.selected {
+			if idx < len(m.prs) {
+				prs = append(prs, m.prs[idx])
+			}
+		}
+		return prs
+	}
+	// No selection, return current PR
+	if m.cursor >= 0 && m.cursor < len(m.prs) {
+		return []lazypr.PRDetail{m.prs[m.cursor]}
+	}
+	return nil
+}
+
 func (m Model) openInBrowser() tea.Cmd {
 	return func() tea.Msg {
 		if m.cursor >= 0 && m.cursor < len(m.prs) {
@@ -381,6 +453,65 @@ func (m Model) openInBrowser() tea.Cmd {
 		}
 		return nil
 	}
+}
+
+// diffErrorMsg is sent when diff viewing fails.
+type diffErrorMsg struct {
+	message string
+}
+
+// showDiff shows the PR diff in a pager.
+func (m Model) showDiff() tea.Cmd {
+	if m.cursor < 0 || m.cursor >= len(m.prs) {
+		return nil
+	}
+	pr := m.prs[m.cursor]
+	repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
+	prNum := fmt.Sprintf("%d", pr.Number)
+
+	// First check if the diff is available (not too large)
+	checkCmd := exec.Command("gh", "pr", "diff", prNum, "-R", repo)
+	if err := checkCmd.Run(); err != nil {
+		// Diff failed - likely too large, offer to open in browser
+		return func() tea.Msg {
+			return diffErrorMsg{message: fmt.Sprintf("Diff too large for #%d - press 'o' to view in browser", pr.Number)}
+		}
+	}
+
+	// Build the gh pr diff command
+	ghArgs := []string{"pr", "diff", prNum, "-R", repo}
+
+	// Detect pager: check $PAGER, then fall back to less, then more
+	pager := os.Getenv("PAGER")
+	if pager == "" {
+		if commandExists("less") {
+			pager = "less"
+		} else if commandExists("more") {
+			pager = "more"
+		} else {
+			pager = "cat" // fallback, no paging
+		}
+	}
+
+	// Check if delta is available for syntax highlighting
+	useDelta := commandExists("delta")
+
+	// Build the command pipeline
+	var cmdStr string
+	if useDelta {
+		cmdStr = fmt.Sprintf("gh %s | delta | %s", strings.Join(ghArgs, " "), pager)
+	} else {
+		cmdStr = fmt.Sprintf("gh %s | %s", strings.Join(ghArgs, " "), pager)
+	}
+
+	// Create the command
+	c := exec.Command("bash", "-c", cmdStr)
+
+	// Use tea.ExecProcess to suspend TUI and run pager
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		// Return execDoneMsg to trigger a redraw
+		return execDoneMsg{}
+	})
 }
 
 // View implements tea.Model.
@@ -440,10 +571,15 @@ func (m Model) renderHelpScreen() string {
 	lines = append(lines, fmt.Sprintf("  %s  %s", keyStyle.Render("PgUp/PgDn"), descStyle.Render("Scroll detail pane (works from list)")))
 	lines = append(lines, fmt.Sprintf("  %s       %s", keyStyle.Render("g/G"), descStyle.Render("Go to top / bottom of detail")))
 	lines = append(lines, "")
-	lines = append(lines, sectionStyle.Render("Actions"))
-	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("a"), descStyle.Render("Approve PR")))
-	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("c"), descStyle.Render("Add comment")))
-	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("r"), descStyle.Render("Request changes")))
+	lines = append(lines, sectionStyle.Render("Selection"))
+	lines = append(lines, fmt.Sprintf("  %s     %s", keyStyle.Render("Space"), descStyle.Render("Toggle selection on current PR")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("v"), descStyle.Render("Select all / clear all")))
+	lines = append(lines, "")
+	lines = append(lines, sectionStyle.Render("Actions (apply to selected or current PR)"))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("a"), descStyle.Render("Approve PR(s)")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("c"), descStyle.Render("Add comment to PR(s)")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("r"), descStyle.Render("Request changes on PR(s)")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("d"), descStyle.Render("View PR diff in pager")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("o"), descStyle.Render("Open PR in browser")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("y"), descStyle.Render("Copy PR URL to clipboard")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("R"), descStyle.Render("Refresh PR data")))
@@ -600,6 +736,12 @@ func (m Model) renderListPane(width, height int) string {
 
 	var lines []string
 	for i, pr := range m.prs {
+		// Selection marker
+		selectMarker := " "
+		if m.selected[i] {
+			selectMarker = "●"
+		}
+
 		// Determine status icon and style
 		statusIcon := pr.StatusIcon()
 		var statusStyle lipgloss.Style
@@ -610,11 +752,11 @@ func (m Model) renderListPane(width, height int) string {
 			statusStyle = m.styles.StatusError
 		case pr.HasConflicts():
 			statusStyle = m.styles.StatusError
-		case pr.StatusState == "SUCCESS":
+		case pr.EffectiveStatus() == "SUCCESS":
 			statusStyle = m.styles.StatusSuccess
-		case pr.StatusState == "FAILURE" || pr.StatusState == "ERROR":
+		case pr.EffectiveStatus() == "FAILURE" || pr.EffectiveStatus() == "ERROR":
 			statusStyle = m.styles.StatusError
-		case pr.StatusState == "PENDING":
+		case pr.EffectiveStatus() == "PENDING":
 			statusStyle = m.styles.StatusPending
 		default:
 			statusStyle = m.styles.StatusUnknown
@@ -626,7 +768,7 @@ func (m Model) renderListPane(width, height int) string {
 		author := m.styles.PRAuthor.Render(fmt.Sprintf("@%s", pr.Author))
 
 		// Truncate title to fit
-		titleWidth := width - 15
+		titleWidth := width - 17 // Account for selection marker
 		if titleWidth < 10 {
 			titleWidth = 10
 		}
@@ -635,7 +777,7 @@ func (m Model) renderListPane(width, height int) string {
 			title = title[:titleWidth-1] + "..."
 		}
 
-		line := fmt.Sprintf("%s %s %s\n  %s", status, prNum, title, author)
+		line := fmt.Sprintf("%s %s %s %s\n    %s", selectMarker, status, prNum, title, author)
 
 		// Apply selection style
 		if i == m.cursor {
@@ -792,12 +934,18 @@ func (m Model) renderFooter() string {
 
 	var hints []string
 	if m.focusedPane == paneList {
-		hints = append(hints, "j/k: navigate")
+		hints = append(hints, "j/k: navigate", "Space: select", "v: all")
 	} else {
 		hints = append(hints, "j/k: scroll")
 	}
-	hints = append(hints, "Tab: switch pane", "PgUp/PgDn: scroll detail")
-	hints = append(hints, "a: approve", "c: comment", "r: request changes", "y: copy", "o: open", "q: quit")
+	hints = append(hints, "Tab: pane")
+
+	// Show selection count if any selected
+	if len(m.selected) > 0 {
+		hints = append(hints, fmt.Sprintf("[%d selected]", len(m.selected)))
+	}
+
+	hints = append(hints, "a: approve", "c: comment", "r: changes", "d: diff", "o: open", "?: help")
 
 	footer := strings.Join(hints, "  ")
 	return m.styles.Footer.Width(m.width).Render(footer)

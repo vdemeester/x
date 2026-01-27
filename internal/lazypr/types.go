@@ -2,6 +2,7 @@
 package lazypr
 
 import (
+	"strings"
 	"time"
 )
 
@@ -86,7 +87,75 @@ func (pr *PRDetail) HasConflicts() bool {
 
 // HasBuildFailure returns true if the PR has a failed status check.
 func (pr *PRDetail) HasBuildFailure() bool {
-	return pr.StatusState == "FAILURE" || pr.StatusState == "ERROR"
+	return pr.EffectiveStatus() == "FAILURE" || pr.EffectiveStatus() == "ERROR"
+}
+
+// EffectiveStatus computes the status from individual checks.
+// This fixes GitHub's rollup which shows FAILURE even if some checks are just pending.
+func (pr *PRDetail) EffectiveStatus() string {
+	if len(pr.Checks) == 0 {
+		return pr.StatusState // Fall back to GitHub's state if no checks
+	}
+
+	hasFailure := false
+	hasPending := false
+	hasSuccess := false
+
+	for _, check := range pr.Checks {
+		name := strings.ToLower(check.Name)
+		conclusion := strings.ToLower(check.Conclusion)
+		status := strings.ToLower(check.Status)
+
+		// Skip non-CI status contexts (tide is Prow's merge status, not a real check)
+		if name == "tide" {
+			continue
+		}
+
+		switch conclusion {
+		case "failure", "timed_out", "action_required":
+			hasFailure = true
+		case "success":
+			hasSuccess = true
+		case "error":
+			// "error" from StatusContext often means "not applicable" (like tide)
+			// Only count it as failure if it's a real CI check (has "completed" status)
+			// and the name suggests it's a real test/build
+			if status == "completed" && !isNonCIContext(name) {
+				hasFailure = true
+			}
+		case "skipped", "cancelled", "neutral":
+			// These don't affect the overall status
+		case "pending":
+			hasPending = true
+		case "":
+			// No conclusion yet - check the status
+			if status == "in_progress" || status == "queued" || status == "pending" {
+				hasPending = true
+			}
+		}
+	}
+
+	if hasFailure {
+		return "FAILURE"
+	}
+	if hasPending {
+		return "PENDING"
+	}
+	if hasSuccess {
+		return "SUCCESS"
+	}
+	return pr.StatusState // Fall back
+}
+
+// isNonCIContext returns true for status contexts that aren't real CI checks.
+func isNonCIContext(name string) bool {
+	nonCI := []string{"tide", "easycla", "cla", "merge", "hold"}
+	for _, n := range nonCI {
+		if strings.Contains(name, n) {
+			return true
+		}
+	}
+	return false
 }
 
 // NeedsAttention returns true if the PR has conflicts or build failures.
@@ -119,7 +188,7 @@ func (pr *PRDetail) StatusIcon() string {
 	if pr.HasConflicts() {
 		return IconConflict
 	}
-	switch pr.StatusState {
+	switch pr.EffectiveStatus() {
 	case "SUCCESS":
 		return IconSuccess
 	case "FAILURE", "ERROR":

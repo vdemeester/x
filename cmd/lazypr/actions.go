@@ -111,18 +111,90 @@ func (m InputModel) View() string {
 	return boxStyle.Render(content)
 }
 
-// approvePR approves a PR using gh CLI.
-func approvePR(pr lazypr.PRDetail) tea.Cmd {
+// approvePRs approves one or more PRs using gh CLI.
+func approvePRs(prs []lazypr.PRDetail) tea.Cmd {
 	return func() tea.Msg {
-		repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
-		prNum := fmt.Sprintf("%d", pr.Number)
+		var approved []int
+		var failed []string
 
-		cmd := exec.Command("gh", "pr", "review", prNum, "-R", repo, "--approve")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return actionResult{success: false, message: fmt.Sprintf("Failed to approve: %v\n%s", err, output)}
+		for _, pr := range prs {
+			repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
+			prNum := fmt.Sprintf("%d", pr.Number)
+
+			cmd := exec.Command("gh", "pr", "review", prNum, "-R", repo, "--approve")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				failed = append(failed, fmt.Sprintf("#%d: %v", pr.Number, string(output)))
+			} else {
+				approved = append(approved, pr.Number)
+			}
 		}
-		return actionResult{success: true, message: fmt.Sprintf("Approved PR #%d", pr.Number)}
+
+		if len(failed) > 0 {
+			return actionResult{success: false, message: fmt.Sprintf("Failed: %s", strings.Join(failed, ", "))}
+		}
+		if len(approved) == 1 {
+			return actionResult{success: true, message: fmt.Sprintf("Approved PR #%d", approved[0])}
+		}
+		return actionResult{success: true, message: fmt.Sprintf("Approved %d PRs", len(approved))}
+	}
+}
+
+// commentPRs adds a comment to one or more PRs.
+func commentPRs(prs []lazypr.PRDetail, body string) tea.Cmd {
+	return func() tea.Msg {
+		var succeeded int
+		var failed []string
+
+		for _, pr := range prs {
+			repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
+			prNum := fmt.Sprintf("%d", pr.Number)
+
+			cmd := exec.Command("gh", "pr", "comment", prNum, "-R", repo, "--body", body)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				failed = append(failed, fmt.Sprintf("#%d: %v", pr.Number, string(output)))
+			} else {
+				succeeded++
+			}
+		}
+
+		if len(failed) > 0 {
+			return actionResult{success: false, message: fmt.Sprintf("Failed: %s", strings.Join(failed, ", "))}
+		}
+		if succeeded == 1 {
+			return actionResult{success: true, message: "Comment added"}
+		}
+		return actionResult{success: true, message: fmt.Sprintf("Commented on %d PRs", succeeded)}
+	}
+}
+
+// requestChangesPRs requests changes on one or more PRs.
+func requestChangesPRs(prs []lazypr.PRDetail, body string) tea.Cmd {
+	return func() tea.Msg {
+		var succeeded int
+		var failed []string
+
+		for _, pr := range prs {
+			repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
+			prNum := fmt.Sprintf("%d", pr.Number)
+
+			cmd := exec.Command("gh", "pr", "review", prNum, "-R", repo, "--request-changes", "--body", body)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				failed = append(failed, fmt.Sprintf("#%d: %v", pr.Number, string(output)))
+			} else {
+				succeeded++
+			}
+		}
+
+		if len(failed) > 0 {
+			return actionResult{success: false, message: fmt.Sprintf("Failed: %s", strings.Join(failed, ", "))}
+		}
+		if succeeded == 1 {
+			return actionResult{success: true, message: "Changes requested"}
+		}
+		return actionResult{success: true, message: fmt.Sprintf("Requested changes on %d PRs", succeeded)}
 	}
 }
 
