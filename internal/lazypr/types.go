@@ -94,27 +94,40 @@ func (pr *PRDetail) NeedsAttention() bool {
 	return pr.HasConflicts() || pr.HasBuildFailure()
 }
 
+// CI/Status icon constants (matching lazyworktree style)
+const (
+	IconSuccess   = "✓"
+	IconFailure   = "⊗"
+	IconPending   = "◷"
+	IconSkipped   = "○"
+	IconCancelled = "⊘"
+	IconMerged    = "⊕"
+	IconClosed    = "⊖"
+	IconConflict  = "!"
+	IconUnknown   = "○"
+)
+
 // StatusIcon returns an icon representing the overall PR status.
 func (pr *PRDetail) StatusIcon() string {
 	// For merged/closed PRs, show state icon
 	if pr.State == "MERGED" {
-		return "⊕"
+		return IconMerged
 	}
 	if pr.State == "CLOSED" {
-		return "⊖"
+		return IconClosed
 	}
 	if pr.HasConflicts() {
-		return "!"
+		return IconConflict
 	}
 	switch pr.StatusState {
 	case "SUCCESS":
-		return "✓"
+		return IconSuccess
 	case "FAILURE", "ERROR":
-		return "✗"
+		return IconFailure
 	case "PENDING":
-		return "●"
+		return IconPending
 	default:
-		return "○"
+		return IconUnknown
 	}
 }
 
@@ -137,18 +150,40 @@ func (pr *PRDetail) IsOpen() bool {
 func (pr *PRDetail) MergeableIcon() string {
 	// For merged PRs, show merged icon
 	if pr.State == "MERGED" {
-		return "⊕"
+		return IconMerged
 	}
 	if pr.State == "CLOSED" {
-		return "⊖"
+		return IconClosed
 	}
 	switch pr.Mergeable {
 	case "MERGEABLE":
-		return "✓"
+		return IconSuccess
 	case "CONFLICTING":
-		return "✗"
+		return IconFailure
 	default:
-		return "○"
+		return IconUnknown
+	}
+}
+
+// CheckIcon returns the appropriate icon for a CI check conclusion.
+func CheckIcon(conclusion, status string) string {
+	switch conclusion {
+	case "success", "SUCCESS":
+		return IconSuccess
+	case "failure", "FAILURE":
+		return IconFailure
+	case "skipped", "SKIPPED":
+		return IconSkipped
+	case "cancelled", "CANCELLED":
+		return IconCancelled
+	case "":
+		// No conclusion yet, check status
+		if status == "in_progress" || status == "IN_PROGRESS" || status == "queued" || status == "QUEUED" {
+			return IconPending
+		}
+		return IconUnknown
+	default:
+		return IconUnknown
 	}
 }
 

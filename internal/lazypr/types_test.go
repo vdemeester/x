@@ -81,14 +81,14 @@ func TestPRDetail_StatusIcon(t *testing.T) {
 		statusState string
 		want        string
 	}{
-		{"success", "OPEN", "MERGEABLE", "SUCCESS", "✓"},
-		{"failure", "OPEN", "MERGEABLE", "FAILURE", "✗"},
-		{"error", "OPEN", "MERGEABLE", "ERROR", "✗"},
-		{"pending", "OPEN", "MERGEABLE", "PENDING", "●"},
-		{"unknown", "OPEN", "MERGEABLE", "", "○"},
-		{"conflicts override", "OPEN", "CONFLICTING", "SUCCESS", "!"},
-		{"merged", "MERGED", "UNKNOWN", "SUCCESS", "⊕"},
-		{"closed", "CLOSED", "UNKNOWN", "", "⊖"},
+		{"success", "OPEN", "MERGEABLE", "SUCCESS", IconSuccess},
+		{"failure", "OPEN", "MERGEABLE", "FAILURE", IconFailure},
+		{"error", "OPEN", "MERGEABLE", "ERROR", IconFailure},
+		{"pending", "OPEN", "MERGEABLE", "PENDING", IconPending},
+		{"unknown", "OPEN", "MERGEABLE", "", IconUnknown},
+		{"conflicts override", "OPEN", "CONFLICTING", "SUCCESS", IconConflict},
+		{"merged", "MERGED", "UNKNOWN", "SUCCESS", IconMerged},
+		{"closed", "CLOSED", "UNKNOWN", "", IconClosed},
 	}
 
 	for _, tt := range tests {
@@ -108,12 +108,12 @@ func TestPRDetail_MergeableIcon(t *testing.T) {
 		mergeable string
 		want      string
 	}{
-		{"mergeable", "OPEN", "MERGEABLE", "✓"},
-		{"conflicting", "OPEN", "CONFLICTING", "✗"},
-		{"unknown", "OPEN", "UNKNOWN", "○"},
-		{"empty", "OPEN", "", "○"},
-		{"merged", "MERGED", "UNKNOWN", "⊕"},
-		{"closed", "CLOSED", "UNKNOWN", "⊖"},
+		{"mergeable", "OPEN", "MERGEABLE", IconSuccess},
+		{"conflicting", "OPEN", "CONFLICTING", IconFailure},
+		{"unknown", "OPEN", "UNKNOWN", IconUnknown},
+		{"empty", "OPEN", "", IconUnknown},
+		{"merged", "MERGED", "UNKNOWN", IconMerged},
+		{"closed", "CLOSED", "UNKNOWN", IconClosed},
 	}
 
 	for _, tt := range tests {
@@ -145,6 +145,34 @@ func TestPRDetail_MergeableText(t *testing.T) {
 			pr := PRDetail{State: tt.state, Mergeable: tt.mergeable}
 			if got := pr.MergeableText(); got != tt.want {
 				t.Errorf("MergeableText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckIcon(t *testing.T) {
+	tests := []struct {
+		name       string
+		conclusion string
+		status     string
+		want       string
+	}{
+		{"success", "success", "", IconSuccess},
+		{"SUCCESS", "SUCCESS", "", IconSuccess},
+		{"failure", "failure", "", IconFailure},
+		{"FAILURE", "FAILURE", "", IconFailure},
+		{"skipped", "skipped", "", IconSkipped},
+		{"cancelled", "cancelled", "", IconCancelled},
+		{"in_progress", "", "in_progress", IconPending},
+		{"queued", "", "queued", IconPending},
+		{"unknown", "other", "", IconUnknown},
+		{"no conclusion no status", "", "", IconUnknown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CheckIcon(tt.conclusion, tt.status); got != tt.want {
+				t.Errorf("CheckIcon(%q, %q) = %q, want %q", tt.conclusion, tt.status, got, tt.want)
 			}
 		})
 	}

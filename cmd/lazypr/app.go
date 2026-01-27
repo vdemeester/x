@@ -698,25 +698,16 @@ func (m Model) renderDetailContent() string {
 		sections = append(sections, m.styles.SectionTitle.Render(fmt.Sprintf("CI Checks (%d)", len(pr.Checks))))
 		var checks []string
 		for _, check := range pr.Checks {
-			var icon string
+			icon := lazypr.CheckIcon(check.Conclusion, check.Status)
 			var style lipgloss.Style
-			switch check.Conclusion {
-			case "success", "SUCCESS":
-				icon = "✓"
+			switch icon {
+			case lazypr.IconSuccess:
 				style = m.styles.StatusSuccess
-			case "failure", "FAILURE":
-				icon = "✗"
+			case lazypr.IconFailure:
 				style = m.styles.StatusError
-			case "":
-				if check.Status == "in_progress" || check.Status == "IN_PROGRESS" {
-					icon = "●"
-					style = m.styles.StatusPending
-				} else {
-					icon = "○"
-					style = m.styles.StatusUnknown
-				}
+			case lazypr.IconPending:
+				style = m.styles.StatusPending
 			default:
-				icon = "○"
 				style = m.styles.StatusUnknown
 			}
 			checks = append(checks, style.Render(icon)+" "+check.Name)
@@ -770,14 +761,17 @@ func (m Model) renderDetailContent() string {
 			var style lipgloss.Style
 			switch r.State {
 			case "APPROVED":
-				icon = "✓"
+				icon = lazypr.IconSuccess
 				style = m.styles.StatusSuccess
 			case "CHANGES_REQUESTED":
-				icon = "✗"
+				icon = lazypr.IconFailure
 				style = m.styles.StatusError
-			default:
-				icon = "●"
+			case "COMMENTED":
+				icon = lazypr.IconSkipped
 				style = m.styles.StatusUnknown
+			default:
+				icon = lazypr.IconPending
+				style = m.styles.StatusPending
 			}
 			reviews = append(reviews, style.Render(icon)+" "+r.Author+" - "+r.State)
 		}
