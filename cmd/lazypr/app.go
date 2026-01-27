@@ -444,20 +444,34 @@ func (m Model) updateChecksModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open the selected check's URL in browser
 			if m.checksModalCursor < len(m.checksModalChecks) {
 				check := m.checksModalChecks[m.checksModalCursor]
+				m.showChecksModal = false
 				if check.URL != "" {
-					m.showChecksModal = false
-					return m, func() tea.Msg {
-						_ = runCommand("xdg-open", check.URL)
-						return nil
-					}
+					// Use gh browse which handles auth better
+					return m, tea.Batch(
+						func() tea.Msg {
+							_ = runCommand("gh", "browse", check.URL)
+							return nil
+						},
+						tea.ClearScreen,
+					)
 				} else {
-					m.statusMsg = "No URL available for this check"
-					m.statusTime = 30
+					// Fall back to opening PR checks page
+					if m.cursor < len(m.prs) {
+						pr := m.prs[m.cursor]
+						checksURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d/checks", pr.Owner, pr.Repo, pr.Number)
+						return m, tea.Batch(
+							func() tea.Msg {
+								_ = runCommand("gh", "browse", checksURL)
+								return nil
+							},
+							tea.ClearScreen,
+						)
+					}
 				}
 			}
 		case "esc", "q", "l":
 			m.showChecksModal = false
-			return m, nil
+			return m, tea.ClearScreen
 		}
 	}
 	return m, nil
