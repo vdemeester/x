@@ -159,3 +159,87 @@ func TestPRRef_URL(t *testing.T) {
 		t.Errorf("PRRef.URL() = %q, want %q", got, want)
 	}
 }
+
+func TestParseRepoRef(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    RepoRef
+		wantErr bool
+	}{
+		{
+			name:  "simple repo",
+			input: "owner/repo",
+			want:  RepoRef{Owner: "owner", Repo: "repo"},
+		},
+		{
+			name:  "hyphenated names",
+			input: "my-org/my-repo",
+			want:  RepoRef{Owner: "my-org", Repo: "my-repo"},
+		},
+		{
+			name:  "tekton example",
+			input: "tektoncd/operator",
+			want:  RepoRef{Owner: "tektoncd", Repo: "operator"},
+		},
+		{
+			name:  "with whitespace",
+			input: "  owner/repo  ",
+			want:  RepoRef{Owner: "owner", Repo: "repo"},
+		},
+		{
+			name:    "with PR number should fail",
+			input:   "owner/repo#123",
+			wantErr: true,
+		},
+		{
+			name:    "URL should fail",
+			input:   "https://github.com/owner/repo",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseRepoRef(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseRepoRef() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("ParseRepoRef() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsRepoRef(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"owner/repo", true},
+		{"tektoncd/operator", true},
+		{"owner/repo#123", false},
+		{"https://github.com/owner/repo", false},
+		{"just-text", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := IsRepoRef(tt.input); got != tt.want {
+				t.Errorf("IsRepoRef(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRepoRef_String(t *testing.T) {
+	ref := RepoRef{Owner: "tektoncd", Repo: "operator"}
+	got := ref.String()
+	want := "tektoncd/operator"
+	if got != want {
+		t.Errorf("RepoRef.String() = %q, want %q", got, want)
+	}
+}

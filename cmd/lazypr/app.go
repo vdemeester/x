@@ -24,9 +24,11 @@ const (
 // Model is the main BubbleTea model for lazypr.
 type Model struct {
 	// Data
-	prs    []lazypr.PRDetail
-	refs   []lazypr.PRRef
-	cursor int
+	prs       []lazypr.PRDetail
+	refs      []lazypr.PRRef
+	repo      *lazypr.RepoRef // For loading all PRs from a repo
+	repoLimit int             // Limit when loading from repo
+	cursor    int
 
 	// Layout
 	width       int
@@ -76,6 +78,18 @@ func NewModel(refs []lazypr.PRRef) Model {
 	}
 }
 
+// NewRepoModel creates a new model that loads PRs from a repository.
+func NewRepoModel(repo lazypr.RepoRef, limit int) Model {
+	return Model{
+		repo:        &repo,
+		repoLimit:   limit,
+		cursor:      0,
+		focusedPane: paneList,
+		loading:     true,
+		styles:      NewStyles(DefaultTheme()),
+	}
+}
+
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
@@ -88,7 +102,18 @@ func (m Model) Init() tea.Cmd {
 func (m Model) loadPRs() tea.Cmd {
 	return func() tea.Msg {
 		fetcher := lazypr.NewFetcher()
-		prs, err := fetcher.FetchPRDetails(m.refs)
+
+		var prs []lazypr.PRDetail
+		var err error
+
+		if m.repo != nil {
+			// Load PRs from repository
+			prs, err = fetcher.FetchRepoPRs(*m.repo, m.repoLimit)
+		} else {
+			// Load specific PRs
+			prs, err = fetcher.FetchPRDetails(m.refs)
+		}
+
 		if err != nil {
 			return prErrorMsg{err: err}
 		}
@@ -493,7 +518,12 @@ func (m Model) overlayModal(background, modal string) string {
 }
 
 func (m Model) renderHeader() string {
-	title := fmt.Sprintf("lazypr - %d PRs", len(m.prs))
+	var title string
+	if m.repo != nil {
+		title = fmt.Sprintf("lazypr - %s - %d PRs", m.repo.String(), len(m.prs))
+	} else {
+		title = fmt.Sprintf("lazypr - %d PRs", len(m.prs))
+	}
 	if m.loading {
 		title += " (loading...)"
 	}

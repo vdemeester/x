@@ -218,6 +218,133 @@ func (f *Fetcher) FetchPRDetails(refs []PRRef) ([]PRDetail, error) {
 	return details, nil
 }
 
+// FetchRepoPRs fetches open PRs from a repository.
+func (f *Fetcher) FetchRepoPRs(repo RepoRef, limit int) ([]PRDetail, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
+	defer cancel()
+
+	query := `query($owner: String!, $repo: String!, $limit: Int!) {
+		repository(owner: $owner, name: $repo) {
+			pullRequests(first: $limit, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+				nodes {
+					number
+					title
+					body
+					state
+					mergeable
+					url
+					createdAt
+					updatedAt
+					baseRefName
+					headRefName
+					author {
+						login
+					}
+					labels(first: 20) {
+						nodes {
+							name
+						}
+					}
+					comments {
+						totalCount
+					}
+					reviews(first: 50) {
+						nodes {
+							author {
+								login
+							}
+							state
+							body
+						}
+					}
+					commits(last: 50) {
+						nodes {
+							commit {
+								oid
+								messageHeadline
+								author {
+									name
+								}
+								statusCheckRollup {
+									state
+									contexts(first: 100) {
+										nodes {
+											__typename
+											... on CheckRun {
+												name
+												status
+												conclusion
+												startedAt
+											}
+											... on StatusContext {
+												context
+												state
+												targetUrl
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					files(first: 100) {
+						nodes {
+							path
+							additions
+							deletions
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	cmd := exec.CommandContext(ctx, "gh", "api", "graphql",
+		"-f", "query="+query,
+		"-f", fmt.Sprintf("owner=%s", repo.Owner),
+		"-f", fmt.Sprintf("repo=%s", repo.Repo),
+		"-F", fmt.Sprintf("limit=%d", limit),
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("gh API failed: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("failed to run gh CLI: %w", err)
+	}
+
+	var resp struct {
+		Data struct {
+			Repository struct {
+				PullRequests struct {
+					Nodes []graphqlPR `json:"nodes"`
+				} `json:"pullRequests"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.Unmarshal(output, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse GraphQL response: %w", err)
+	}
+
+	if len(resp.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL error: %s", resp.Errors[0].Message)
+	}
+
+	// Convert to PRDetail
+	details := make([]PRDetail, 0, len(resp.Data.Repository.PullRequests.Nodes))
+	for _, pr := range resp.Data.Repository.PullRequests.Nodes {
+		ref := PRRef{Owner: repo.Owner, Repo: repo.Repo, Number: pr.Number}
+		details = append(details, f.convertPR(pr, ref))
+	}
+
+	return details, nil
+}
+
 func (f *Fetcher) convertPR(pr graphqlPR, ref PRRef) PRDetail {
 	// Extract labels
 	labels := make([]string, len(pr.Labels.Nodes))
