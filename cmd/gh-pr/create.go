@@ -136,8 +136,8 @@ func runCreate(out *output.Writer, opts createOpts) error {
 		out.Success("Switched to branch: %s", opts.branch)
 	}
 
-	// Check for uncommitted changes
-	hasChanges, err := hasUncommittedChanges(".")
+	// Check for uncommitted changes (excludes untracked files)
+	hasChanges, err := hasUncommittedTrackedChanges()
 	if err != nil {
 		out.Warning("Could not check for uncommitted changes: %v", err)
 	} else if hasChanges {
@@ -396,6 +396,30 @@ func detectMainBranch() string {
 
 	// Default to main
 	return "main"
+}
+
+// hasUncommittedTrackedChanges checks for uncommitted changes in tracked files only.
+// Unlike hasUncommittedChanges, this excludes untracked files (marked with ?? in git status).
+func hasUncommittedTrackedChanges() (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+
+	// Check each line - untracked files start with "??"
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Untracked files have "??" prefix, skip them
+		if !strings.HasPrefix(line, "??") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func loadTemplate(out *output.Writer, templatePath string, refresh bool) (string, error) {
