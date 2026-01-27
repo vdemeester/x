@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -441,32 +442,13 @@ func (m Model) updateChecksModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checksModalCursor--
 			}
 		case "enter":
-			// Open the selected check's URL in browser
+			// View logs for the selected check
 			if m.checksModalCursor < len(m.checksModalChecks) {
 				check := m.checksModalChecks[m.checksModalCursor]
 				m.showChecksModal = false
-				if check.URL != "" {
-					// Use gh browse which handles auth better
-					return m, tea.Batch(
-						func() tea.Msg {
-							_ = runCommand("gh", "browse", check.URL)
-							return nil
-						},
-						tea.ClearScreen,
-					)
-				} else {
-					// Fall back to opening PR checks page
-					if m.cursor < len(m.prs) {
-						pr := m.prs[m.cursor]
-						checksURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d/checks", pr.Owner, pr.Repo, pr.Number)
-						return m, tea.Batch(
-							func() tea.Msg {
-								_ = runCommand("gh", "browse", checksURL)
-								return nil
-							},
-							tea.ClearScreen,
-						)
-					}
+				if m.cursor < len(m.prs) {
+					pr := m.prs[m.cursor]
+					return m, m.showCheckLogs(check, pr)
 				}
 			}
 		case "esc", "q", "l":
@@ -475,6 +457,61 @@ func (m Model) updateChecksModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// parseGitHubActionsURL extracts run ID and job ID from a GitHub Actions URL.
+// URL format: https://github.com/owner/repo/actions/runs/<run-id>/job/<job-id>
+func parseGitHubActionsURL(url string) (runID, jobID string, ok bool) {
+	re := regexp.MustCompile(`github\.com/[^/]+/[^/]+/actions/runs/(\d+)/job/(\d+)`)
+	matches := re.FindStringSubmatch(url)
+	if len(matches) == 3 {
+		return matches[1], matches[2], true
+	}
+	return "", "", false
+}
+
+// showCheckLogs displays logs for a CI check in a pager.
+func (m Model) showCheckLogs(check lazypr.Check, pr lazypr.PRDetail) tea.Cmd {
+	repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
+
+	// Try to parse as GitHub Actions URL
+	runID, jobID, ok := parseGitHubActionsURL(check.URL)
+	if !ok {
+		// Not a GitHub Actions URL - open in browser as fallback
+		return func() tea.Msg {
+			if check.URL != "" {
+				_ = runCommand("xdg-open", check.URL)
+			} else {
+				checksURL := fmt.Sprintf("https://github.com/%s/%s/pull/%d/checks", pr.Owner, pr.Repo, pr.Number)
+				_ = runCommand("xdg-open", checksURL)
+			}
+			return execDoneMsg{}
+		}
+	}
+
+	// Build gh run view command
+	ghArgs := []string{"run", "view", runID, "-R", repo, "--job", jobID, "--log"}
+
+	// Detect pager
+	pager := os.Getenv("PAGER")
+	if pager == "" {
+		if commandExists("less") {
+			pager = "less"
+		} else if commandExists("more") {
+			pager = "more"
+		} else {
+			pager = "cat"
+		}
+	}
+
+	// Build command pipeline
+	cmdStr := fmt.Sprintf("gh %s | %s", strings.Join(ghArgs, " "), pager)
+	c := exec.Command("bash", "-c", cmdStr)
+
+	// Use tea.ExecProcess to suspend TUI and run pager
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return execDoneMsg{}
+	})
 }
 
 func (m Model) detailPaneDimensions() (int, int) {
