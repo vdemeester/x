@@ -451,6 +451,16 @@ func (m Model) updateChecksModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.showCheckLogs(check, pr)
 				}
 			}
+		case "e":
+			// Explain check with AI
+			if m.checksModalCursor < len(m.checksModalChecks) {
+				check := m.checksModalChecks[m.checksModalCursor]
+				m.showChecksModal = false
+				if m.cursor < len(m.prs) {
+					pr := m.prs[m.cursor]
+					return m, m.explainCheckWithAI(check, pr)
+				}
+			}
 		case "esc", "q", "l":
 			m.showChecksModal = false
 			return m, tea.ClearScreen
@@ -509,6 +519,64 @@ func (m Model) showCheckLogs(check lazypr.Check, pr lazypr.PRDetail) tea.Cmd {
 	c := exec.Command("bash", "-c", cmdStr)
 
 	// Use tea.ExecProcess to suspend TUI and run pager
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return execDoneMsg{}
+	})
+}
+
+// getAICommand returns the AI command to use for explanations.
+// Checks LAZYPR_AI_CMD env var, then tries common AI CLI tools.
+func getAICommand() string {
+	if cmd := os.Getenv("LAZYPR_AI_CMD"); cmd != "" {
+		return cmd
+	}
+	// Try common AI CLI tools
+	for _, cmd := range []string{"aichat", "gemini", "llm", "sgpt"} {
+		if commandExists(cmd) {
+			return cmd
+		}
+	}
+	return ""
+}
+
+// explainCheckWithAI sends check logs to an AI for explanation.
+func (m Model) explainCheckWithAI(check lazypr.Check, pr lazypr.PRDetail) tea.Cmd {
+	repo := fmt.Sprintf("%s/%s", pr.Owner, pr.Repo)
+
+	// Get AI command
+	aiCmd := getAICommand()
+	if aiCmd == "" {
+		return func() tea.Msg {
+			return actionResult{success: false, message: "No AI command found. Set LAZYPR_AI_CMD or install aichat/gemini/llm"}
+		}
+	}
+
+	// Try to parse as GitHub Actions URL
+	runID, jobID, ok := parseGitHubActionsURL(check.URL)
+	if !ok {
+		return func() tea.Msg {
+			return actionResult{success: false, message: "Can only explain GitHub Actions logs"}
+		}
+	}
+
+	// Build command to fetch logs and pipe to AI
+	prompt := fmt.Sprintf("Analyze this CI log from GitHub Actions check '%s' and explain why it failed or what happened. Be concise and focus on the actual error or issue:", check.Name)
+
+	// Detect pager
+	pager := os.Getenv("PAGER")
+	if pager == "" {
+		if commandExists("less") {
+			pager = "less"
+		} else {
+			pager = "cat"
+		}
+	}
+
+	// Build command: fetch logs, pipe to AI with prompt, show in pager
+	cmdStr := fmt.Sprintf("gh run view %s -R %s --job %s --log | %s %q | %s",
+		runID, repo, jobID, aiCmd, prompt, pager)
+	c := exec.Command("bash", "-c", cmdStr)
+
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return execDoneMsg{}
 	})
@@ -696,7 +764,7 @@ func (m Model) renderHelpScreen() string {
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("c"), descStyle.Render("Add comment to PR(s)")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("r"), descStyle.Render("Request changes on PR(s)")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("d"), descStyle.Render("View PR diff in pager")))
-	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("l"), descStyle.Render("View CI check logs")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("l"), descStyle.Render("View CI check logs (Enter=view, e=AI explain)")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("o"), descStyle.Render("Open PR in browser")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("y"), descStyle.Render("Copy PR URL to clipboard")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("R"), descStyle.Render("Refresh PR data")))
@@ -764,7 +832,7 @@ func (m Model) renderChecksModal() string {
 		Bold(true)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("CI Checks - Press Enter to open logs"))
+	lines = append(lines, titleStyle.Render("CI Checks"))
 	lines = append(lines, "")
 
 	for i, check := range m.checksModalChecks {
@@ -792,7 +860,7 @@ func (m Model) renderChecksModal() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Faint(true).Render("j/k: navigate  Enter: open  Esc: close"))
+	lines = append(lines, lipgloss.NewStyle().Faint(true).Render("j/k: navigate  Enter: view logs  e: AI explain  Esc: close"))
 
 	return boxStyle.Render(strings.Join(lines, "\n"))
 }
