@@ -56,6 +56,11 @@ type Model struct {
 	// Help screen
 	showHelp bool
 
+	// Checks modal
+	showChecksModal    bool
+	checksModalCursor  int
+	checksModalChecks  []lazypr.Check // Filtered checks to show
+
 	// Styles
 	styles Styles
 }
@@ -150,6 +155,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle input modal mode
 	if m.inputMode {
 		return m.updateInputMode(msg)
+	}
+
+	// Handle checks modal
+	if m.showChecksModal {
+		return m.updateChecksModal(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -250,6 +260,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d":
 			if len(m.prs) > 0 && m.cursor < len(m.prs) {
 				return m, m.showDiff()
+			}
+
+		case "l":
+			if len(m.prs) > 0 && m.cursor < len(m.prs) {
+				pr := m.prs[m.cursor]
+				if len(pr.Checks) > 0 {
+					m.showChecksModal = true
+					m.checksModalCursor = 0
+					m.checksModalChecks = pr.Checks
+				} else {
+					m.statusMsg = "No checks for this PR"
+					m.statusTime = 30
+				}
+				return m, nil
 			}
 
 		case "y":
@@ -404,6 +428,41 @@ func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateChecksModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j", "down":
+			if m.checksModalCursor < len(m.checksModalChecks)-1 {
+				m.checksModalCursor++
+			}
+		case "k", "up":
+			if m.checksModalCursor > 0 {
+				m.checksModalCursor--
+			}
+		case "enter":
+			// Open the selected check's URL in browser
+			if m.checksModalCursor < len(m.checksModalChecks) {
+				check := m.checksModalChecks[m.checksModalCursor]
+				if check.URL != "" {
+					m.showChecksModal = false
+					return m, func() tea.Msg {
+						_ = runCommand("xdg-open", check.URL)
+						return nil
+					}
+				} else {
+					m.statusMsg = "No URL available for this check"
+					m.statusTime = 30
+				}
+			}
+		case "esc", "q", "l":
+			m.showChecksModal = false
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 func (m Model) detailPaneDimensions() (int, int) {
 	if m.width == 0 || m.height == 0 {
 		return 80, 24
@@ -542,6 +601,12 @@ func (m Model) View() string {
 		view = m.overlayModal(view, modal)
 	}
 
+	// Overlay checks modal if active
+	if m.showChecksModal {
+		modal := m.renderChecksModal()
+		view = m.overlayModal(view, modal)
+	}
+
 	return view
 }
 
@@ -580,6 +645,7 @@ func (m Model) renderHelpScreen() string {
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("c"), descStyle.Render("Add comment to PR(s)")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("r"), descStyle.Render("Request changes on PR(s)")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("d"), descStyle.Render("View PR diff in pager")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("l"), descStyle.Render("View CI check logs")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("o"), descStyle.Render("Open PR in browser")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("y"), descStyle.Render("Copy PR URL to clipboard")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("R"), descStyle.Render("Refresh PR data")))
@@ -633,6 +699,51 @@ func (m Model) renderInputModal() string {
 	)
 
 	return boxStyle.Render(content)
+}
+
+func (m Model) renderChecksModal() string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.styles.Theme.Accent).
+		Padding(1, 2).
+		Width(70)
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(m.styles.Theme.Accent).
+		Bold(true)
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("CI Checks - Press Enter to open logs"))
+	lines = append(lines, "")
+
+	for i, check := range m.checksModalChecks {
+		icon := lazypr.CheckIcon(check.Conclusion, check.Status)
+		var style lipgloss.Style
+		switch icon {
+		case lazypr.IconSuccess:
+			style = m.styles.StatusSuccess
+		case lazypr.IconFailure:
+			style = m.styles.StatusError
+		case lazypr.IconPending:
+			style = m.styles.StatusPending
+		default:
+			style = m.styles.StatusUnknown
+		}
+
+		line := fmt.Sprintf("%s %s", style.Render(icon), check.Name)
+
+		if i == m.checksModalCursor {
+			line = m.styles.PRItemSelected.Render("▸ " + line)
+		} else {
+			line = "  " + line
+		}
+		lines = append(lines, line)
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Faint(true).Render("j/k: navigate  Enter: open  Esc: close"))
+
+	return boxStyle.Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) overlayModal(background, modal string) string {
@@ -945,7 +1056,7 @@ func (m Model) renderFooter() string {
 		hints = append(hints, fmt.Sprintf("[%d selected]", len(m.selected)))
 	}
 
-	hints = append(hints, "a: approve", "c: comment", "r: changes", "d: diff", "o: open", "?: help")
+	hints = append(hints, "a: approve", "c: comment", "d: diff", "l: logs", "o: open", "?: help")
 
 	footer := strings.Join(hints, "  ")
 	return m.styles.Footer.Width(m.width).Render(footer)

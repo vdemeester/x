@@ -82,6 +82,7 @@ type graphqlPR struct {
 							Status     string `json:"status"`
 							Conclusion string `json:"conclusion"`
 							TargetURL  string `json:"targetUrl"`
+							DetailsURL string `json:"detailsUrl"`
 							StartedAt  string `json:"startedAt"`
 						} `json:"nodes"`
 					} `json:"contexts"`
@@ -153,6 +154,7 @@ func (f *Fetcher) FetchPRDetail(ref PRRef) (PRDetail, error) {
 											name
 											status
 											conclusion
+											detailsUrl
 											startedAt
 										}
 										... on StatusContext {
@@ -401,6 +403,7 @@ func (f *Fetcher) convertPR(pr graphqlPR, ref PRRef) PRDetail {
 				check.Name = ctx.Name
 				check.Status = ctx.Status
 				check.Conclusion = ctx.Conclusion
+				check.URL = ctx.DetailsURL
 				if ctx.StartedAt != "" {
 					if t, err := time.Parse(time.RFC3339, ctx.StartedAt); err == nil {
 						check.StartedAt = t
