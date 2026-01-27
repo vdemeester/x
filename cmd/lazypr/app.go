@@ -176,12 +176,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Switch panes
 		case "tab":
 			m.focusedPane = (m.focusedPane + 1) % 2
+			m.resizeViewport()
 
 		case "1":
 			m.focusedPane = paneList
+			m.resizeViewport()
 
 		case "2":
 			m.focusedPane = paneDetail
+			m.resizeViewport()
 
 		// PgUp/PgDown scroll detail pane while in list (like gh-news)
 		case "pgup":
@@ -291,6 +294,13 @@ func (m *Model) updateDetailViewport() {
 	m.detailViewport.GotoTop()
 }
 
+func (m *Model) resizeViewport() {
+	detailWidth, detailHeight := m.detailPaneDimensions()
+	m.detailViewport.Width = detailWidth
+	m.detailViewport.Height = detailHeight
+	m.detailViewport.SetContent(m.renderDetailContent())
+}
+
 func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -345,7 +355,14 @@ func (m Model) detailPaneDimensions() (int, int) {
 		return 80, 24
 	}
 	// Account for borders, header, footer
-	contentWidth := int(float64(m.width) * detailPaneRatio) - 4
+	// Detail pane width depends on focus state (golden ratio)
+	var detailRatio float64
+	if m.focusedPane == paneDetail {
+		detailRatio = detailPaneRatio // 62% when focused
+	} else {
+		detailRatio = listPaneRatio // 38% when unfocused
+	}
+	contentWidth := int(float64(m.width)*detailRatio) - 4
 	contentHeight := m.height - 6
 	if contentHeight < 1 {
 		contentHeight = 1
@@ -540,8 +557,15 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderContent() string {
 	// Calculate pane widths based on golden ratio
-	listWidth := int(float64(m.width) * listPaneRatio)
-	detailWidth := m.width - listWidth
+	// Focused pane gets the larger portion (62%), unfocused gets smaller (38%)
+	var listWidth, detailWidth int
+	if m.focusedPane == paneList {
+		listWidth = int(float64(m.width) * detailPaneRatio)  // 62% for focused list
+		detailWidth = m.width - listWidth                    // 38% for unfocused detail
+	} else {
+		listWidth = int(float64(m.width) * listPaneRatio)    // 38% for unfocused list
+		detailWidth = m.width - listWidth                    // 62% for focused detail
+	}
 
 	// Content height (total - header - footer)
 	contentHeight := m.height - 4
