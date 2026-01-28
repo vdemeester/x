@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -50,8 +50,8 @@ type Model struct {
 
 	// Input modal state
 	inputMode    bool              // Whether input modal is active
-	inputAction  string            // "comment" or "changes"
-	inputModel   textinput.Model   // Input field for modal
+	inputAction  string            // "comment", "changes", or "approve"
+	inputModel   textarea.Model    // Multi-line input field for modal
 	inputPRs     []lazypr.PRDetail // PRs to act on when input is submitted
 
 	// Help screen
@@ -285,8 +285,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			prs := m.getSelectedPRs()
 			if len(prs) > 0 {
-				m.selected = make(map[int]bool) // Clear selection after action
-				return m, approvePRs(prs)
+				m.inputMode = true
+				m.inputAction = "approve"
+				m.inputPRs = prs
+				m.inputModel = textarea.New()
+				if len(prs) > 1 {
+					m.inputModel.Placeholder = fmt.Sprintf("Optional comment for %d PRs...", len(prs))
+				} else {
+					m.inputModel.Placeholder = "Optional comment..."
+				}
+				m.inputModel.Focus()
+				m.inputModel.CharLimit = 1000
+				m.inputModel.SetWidth(60)
+				m.inputModel.SetHeight(3)
+				m.selected = make(map[int]bool) // Clear selection
+				return m, textarea.Blink
 			}
 
 		case "c":
@@ -295,7 +308,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputMode = true
 				m.inputAction = "comment"
 				m.inputPRs = prs
-				m.inputModel = textinput.New()
+				m.inputModel = textarea.New()
 				if len(prs) > 1 {
 					m.inputModel.Placeholder = fmt.Sprintf("Comment for %d PRs...", len(prs))
 				} else {
@@ -303,9 +316,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.inputModel.Focus()
 				m.inputModel.CharLimit = 1000
-				m.inputModel.Width = 60
+				m.inputModel.SetWidth(60)
+				m.inputModel.SetHeight(3)
 				m.selected = make(map[int]bool) // Clear selection
-				return m, textinput.Blink
+				return m, textarea.Blink
 			}
 
 		case "r":
@@ -314,7 +328,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputMode = true
 				m.inputAction = "changes"
 				m.inputPRs = prs
-				m.inputModel = textinput.New()
+				m.inputModel = textarea.New()
 				if len(prs) > 1 {
 					m.inputModel.Placeholder = fmt.Sprintf("Request changes for %d PRs...", len(prs))
 				} else {
@@ -322,9 +336,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.inputModel.Focus()
 				m.inputModel.CharLimit = 1000
-				m.inputModel.Width = 60
+				m.inputModel.SetWidth(60)
+				m.inputModel.SetHeight(3)
 				m.selected = make(map[int]bool) // Clear selection
-				return m, textinput.Blink
+				return m, textarea.Blink
 			}
 
 		case "R":
@@ -397,22 +412,41 @@ func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "enter":
-			if m.inputModel.Value() != "" {
-				message := m.inputModel.Value()
-				prs := m.inputPRs
-				action := m.inputAction
-				m.inputMode = false
-				m.inputPRs = nil
+		case "ctrl+j":
+			// Ctrl+J inserts a newline (traditional LF)
+			m.inputModel.InsertString("\n")
+			return m, nil
+		case "ctrl+d", "ctrl+s":
+			// Ctrl+D or Ctrl+S submits the input
+			message := m.inputModel.Value()
+			prs := m.inputPRs
+			action := m.inputAction
+			m.inputMode = false
+			m.inputPRs = nil
 
-				switch action {
-				case "comment":
-					return m, commentPRs(prs, message)
-				case "changes":
-					return m, requestChangesPRs(prs, message)
+			switch action {
+			case "approve":
+				return m, approvePRsWithComment(prs, message)
+			case "comment":
+				if message == "" {
+					m.statusMsg = "Comment cannot be empty"
+					m.statusTime = 30
+					return m, nil
 				}
+				return m, commentPRs(prs, message)
+			case "changes":
+				if message == "" {
+					m.statusMsg = "Reason cannot be empty"
+					m.statusTime = 30
+					return m, nil
+				}
+				return m, requestChangesPRs(prs, message)
 			}
-		case "esc", "ctrl+c":
+		case "esc":
+			m.inputMode = false
+			m.inputPRs = nil
+			return m, nil
+		case "ctrl+c":
 			m.inputMode = false
 			m.inputPRs = nil
 			return m, nil
@@ -424,6 +458,7 @@ func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Let textarea handle all other input (including Enter for newlines)
 	var cmd tea.Cmd
 	m.inputModel, cmd = m.inputModel.Update(msg)
 	return m, cmd
@@ -789,16 +824,25 @@ func (m Model) renderHelpScreen() string {
 
 func (m Model) renderInputModal() string {
 	var title string
+	var helpText string
 	switch m.inputAction {
+	case "approve":
+		title = "Approve PR"
+		helpText = "Ctrl+D to approve (comment optional), Enter/Ctrl+J for newline, Esc to cancel"
 	case "comment":
 		title = "Add Comment"
+		helpText = "Ctrl+D to submit, Enter/Ctrl+J for newline, Esc to cancel"
 	case "changes":
 		title = "Request Changes"
+		helpText = "Ctrl+D to submit, Enter/Ctrl+J for newline, Esc to cancel"
 	default:
 		title = "Input"
+		helpText = "Ctrl+D to submit, Enter/Ctrl+J for newline, Esc to cancel"
 	}
 
-	if m.cursor < len(m.prs) {
+	if len(m.inputPRs) > 1 {
+		title += fmt.Sprintf(" (%d PRs)", len(m.inputPRs))
+	} else if m.cursor < len(m.prs) {
 		title += fmt.Sprintf(" - PR #%d", m.prs[m.cursor].Number)
 	}
 
@@ -812,9 +856,12 @@ func (m Model) renderInputModal() string {
 		Foreground(m.styles.Theme.Accent).
 		Bold(true)
 
-	content := fmt.Sprintf("%s\n\n%s\n\nPress Enter to submit, Esc to cancel",
+	hintStyle := lipgloss.NewStyle().Faint(true)
+
+	content := fmt.Sprintf("%s\n\n%s\n\n%s",
 		titleStyle.Render(title),
 		m.inputModel.View(),
+		hintStyle.Render(helpText),
 	)
 
 	return boxStyle.Render(content)
