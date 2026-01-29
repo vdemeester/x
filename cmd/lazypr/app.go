@@ -28,8 +28,9 @@ type Model struct {
 	// Data
 	prs       []lazypr.PRDetail
 	refs      []lazypr.PRRef
-	repo      *lazypr.RepoRef // For loading all PRs from a repo
-	repoLimit int             // Limit when loading from repo
+	repo      *lazypr.RepoRef       // For loading all PRs from a repo
+	repoLimit int                   // Limit when loading from repo
+	filter    lazypr.FilterOptions  // Filter options for repo loading
 	cursor    int
 	selected  map[int]bool // Selected PR indices for multi-select
 
@@ -40,6 +41,9 @@ type Model struct {
 
 	// Detail pane viewport for scrolling
 	detailViewport viewport.Model
+
+	// List pane scrolling
+	listOffset int // First visible item index in list
 
 	// State
 	loading    bool
@@ -93,9 +97,15 @@ func NewModel(refs []lazypr.PRRef) Model {
 
 // NewRepoModel creates a new model that loads PRs from a repository.
 func NewRepoModel(repo lazypr.RepoRef, limit int) Model {
+	return NewRepoModelWithFilter(repo, limit, lazypr.FilterOptions{})
+}
+
+// NewRepoModelWithFilter creates a new model with filter options.
+func NewRepoModelWithFilter(repo lazypr.RepoRef, limit int, filter lazypr.FilterOptions) Model {
 	return Model{
 		repo:        &repo,
 		repoLimit:   limit,
+		filter:      filter,
 		cursor:      0,
 		selected:    make(map[int]bool),
 		focusedPane: paneList,
@@ -121,8 +131,8 @@ func (m Model) loadPRs() tea.Cmd {
 		var err error
 
 		if m.repo != nil {
-			// Load PRs from repository
-			prs, err = fetcher.FetchRepoPRs(*m.repo, m.repoLimit)
+			// Load PRs from repository with filter
+			prs, err = fetcher.FetchRepoPRsWithFilter(*m.repo, m.repoLimit, m.filter)
 		} else {
 			// Load specific PRs
 			prs, err = fetcher.FetchPRDetails(m.refs)
@@ -167,12 +177,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.ready = true
 
-		// Initialize viewport with detail pane dimensions
+		// Initialize or resize viewport
 		detailWidth, detailHeight := m.detailPaneDimensions()
-		m.detailViewport = viewport.New(detailWidth, detailHeight)
+		if !m.ready {
+			// First time: create viewport
+			m.detailViewport = viewport.New(detailWidth, detailHeight)
+			m.ready = true
+		} else {
+			// Resize: update dimensions
+			m.detailViewport.Width = detailWidth
+			m.detailViewport.Height = detailHeight
+		}
 		m.detailViewport.SetContent(m.renderDetailContent())
+
+		// Update list scrolling for new dimensions
+		m.ensureCursorVisible()
+
+		// Force a clear screen to ensure proper redraw
+		return m, tea.ClearScreen
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -183,12 +206,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down":
 			if m.focusedPane == paneList && len(m.prs) > 0 {
 				m.cursor = (m.cursor + 1) % len(m.prs)
+				m.ensureCursorVisible()
 				m.updateDetailViewport()
 			}
 
 		case "k", "up":
 			if m.focusedPane == paneList && len(m.prs) > 0 {
 				m.cursor = (m.cursor - 1 + len(m.prs)) % len(m.prs)
+				m.ensureCursorVisible()
 				m.updateDetailViewport()
 			}
 
@@ -203,6 +228,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Move to next item after selection
 				if m.cursor < len(m.prs)-1 {
 					m.cursor++
+					m.ensureCursorVisible()
 					m.updateDetailViewport()
 				}
 			}
@@ -406,6 +432,61 @@ func (m *Model) resizeViewport() {
 	m.detailViewport.Width = detailWidth
 	m.detailViewport.Height = detailHeight
 	m.detailViewport.SetContent(m.renderDetailContent())
+}
+
+// ensureCursorVisible adjusts listOffset so the cursor is visible.
+// Each PR item takes 2 lines (title + author).
+func (m *Model) ensureCursorVisible() {
+	if len(m.prs) == 0 {
+		return
+	}
+
+	// Calculate visible items based on height
+	// Each item is 2 lines, so visible items = height / 2
+	_, height := m.listPaneDimensions()
+	linesPerItem := 2
+	visibleItems := height / linesPerItem
+	if visibleItems < 1 {
+		visibleItems = 1
+	}
+
+	// Adjust offset if cursor is out of view
+	if m.cursor < m.listOffset {
+		m.listOffset = m.cursor
+	} else if m.cursor >= m.listOffset+visibleItems {
+		m.listOffset = m.cursor - visibleItems + 1
+	}
+
+	// Clamp offset to valid range
+	maxOffset := len(m.prs) - visibleItems
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.listOffset > maxOffset {
+		m.listOffset = maxOffset
+	}
+	if m.listOffset < 0 {
+		m.listOffset = 0
+	}
+}
+
+func (m Model) listPaneDimensions() (int, int) {
+	if m.width == 0 || m.height == 0 {
+		return 40, 24
+	}
+	// Calculate list pane width based on focus
+	var listRatio float64
+	if m.focusedPane == paneList {
+		listRatio = detailPaneRatio // 62% when focused
+	} else {
+		listRatio = listPaneRatio // 38% when unfocused
+	}
+	contentWidth := int(float64(m.width)*listRatio) - 4
+	contentHeight := m.height - 6 // Account for header/footer/borders
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	return contentWidth, contentHeight
 }
 
 func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1011,8 +1092,23 @@ func (m Model) renderListPane(width, height int) string {
 		return "No PRs to display"
 	}
 
+	// Calculate visible range based on listOffset
+	linesPerItem := 2
+	visibleItems := height / linesPerItem
+	if visibleItems < 1 {
+		visibleItems = 1
+	}
+
+	startIdx := m.listOffset
+	endIdx := startIdx + visibleItems
+	if endIdx > len(m.prs) {
+		endIdx = len(m.prs)
+	}
+
 	var lines []string
-	for i, pr := range m.prs {
+	for i := startIdx; i < endIdx; i++ {
+		pr := m.prs[i]
+
 		// Selection marker
 		selectMarker := " "
 		if m.selected[i] {

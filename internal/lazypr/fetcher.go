@@ -222,12 +222,18 @@ func (f *Fetcher) FetchPRDetails(refs []PRRef) ([]PRDetail, error) {
 
 // FetchRepoPRs fetches open PRs from a repository.
 func (f *Fetcher) FetchRepoPRs(repo RepoRef, limit int) ([]PRDetail, error) {
+	return f.FetchRepoPRsWithFilter(repo, limit, FilterOptions{})
+}
+
+// FetchRepoPRsWithFilter fetches PRs from a repository with filter options.
+func (f *Fetcher) FetchRepoPRsWithFilter(repo RepoRef, limit int, filter FilterOptions) ([]PRDetail, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
 	defer cancel()
 
-	query := `query($owner: String!, $repo: String!, $limit: Int!) {
+	states := filter.GraphQLStates()
+	query := fmt.Sprintf(`query($owner: String!, $repo: String!, $limit: Int!) {
 		repository(owner: $owner, name: $repo) {
-			pullRequests(first: $limit, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+			pullRequests(first: $limit, states: %s, orderBy: {field: UPDATED_AT, direction: DESC}) {
 				nodes {
 					number
 					title
@@ -299,7 +305,7 @@ func (f *Fetcher) FetchRepoPRs(repo RepoRef, limit int) ([]PRDetail, error) {
 				}
 			}
 		}
-	}`
+	}`, states)
 
 	cmd := exec.CommandContext(ctx, "gh", "api", "graphql",
 		"-f", "query="+query,
@@ -337,11 +343,18 @@ func (f *Fetcher) FetchRepoPRs(repo RepoRef, limit int) ([]PRDetail, error) {
 		return nil, fmt.Errorf("GraphQL error: %s", resp.Errors[0].Message)
 	}
 
-	// Convert to PRDetail
+	// Convert to PRDetail and apply client-side filters
 	details := make([]PRDetail, 0, len(resp.Data.Repository.PullRequests.Nodes))
 	for _, pr := range resp.Data.Repository.PullRequests.Nodes {
 		ref := PRRef{Owner: repo.Owner, Repo: repo.Repo, Number: pr.Number}
-		details = append(details, f.convertPR(pr, ref))
+		detail := f.convertPR(pr, ref)
+
+		// Apply client-side filters (label, author)
+		if filter.HasFilters() && !filter.MatchesPR(detail) {
+			continue
+		}
+
+		details = append(details, detail)
 	}
 
 	return details, nil
