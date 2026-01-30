@@ -45,6 +45,12 @@ type Review struct {
 	Body   string
 }
 
+// Comment represents a discussion comment on a PR.
+type Comment struct {
+	Author string
+	Body   string
+}
+
 // PRDetail contains comprehensive details about a pull request.
 type PRDetail struct {
 	// Basic info
@@ -73,7 +79,7 @@ type PRDetail struct {
 	Files    []File
 	Labels   []string
 	Reviews  []Review
-	Comments int
+	Comments []Comment
 
 	// Review summary
 	Approvals       int

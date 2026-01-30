@@ -52,7 +52,12 @@ type graphqlPR struct {
 		} `json:"nodes"`
 	} `json:"labels"`
 	Comments struct {
-		TotalCount int `json:"totalCount"`
+		Nodes []struct {
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			Body string `json:"body"`
+		} `json:"nodes"`
 	} `json:"comments"`
 	Reviews struct {
 		Nodes []struct {
@@ -125,8 +130,13 @@ func (f *Fetcher) FetchPRDetail(ref PRRef) (PRDetail, error) {
 						name
 					}
 				}
-				comments {
-					totalCount
+				comments(first: 20) {
+					nodes {
+						author {
+							login
+						}
+						body
+					}
 				}
 				reviews(first: 50) {
 					nodes {
@@ -253,8 +263,13 @@ func (f *Fetcher) FetchRepoPRsWithFilter(repo RepoRef, limit int, filter FilterO
 							name
 						}
 					}
-					comments {
-						totalCount
+					comments(first: 20) {
+						nodes {
+							author {
+								login
+							}
+							body
+						}
 					}
 					reviews(first: 50) {
 						nodes {
@@ -384,6 +399,15 @@ func (f *Fetcher) convertPR(pr graphqlPR, ref PRRef) PRDetail {
 		}
 	}
 
+	// Extract comments
+	comments := make([]Comment, len(pr.Comments.Nodes))
+	for i, c := range pr.Comments.Nodes {
+		comments[i] = Comment{
+			Author: c.Author.Login,
+			Body:   c.Body,
+		}
+	}
+
 	// Extract commits
 	commits := make([]Commit, len(pr.Commits.Nodes))
 	for i, c := range pr.Commits.Nodes {
@@ -452,7 +476,7 @@ func (f *Fetcher) convertPR(pr graphqlPR, ref PRRef) PRDetail {
 		Files:           files,
 		Labels:          labels,
 		Reviews:         reviews,
-		Comments:        pr.Comments.TotalCount,
+		Comments:        comments,
 		Approvals:       approvals,
 		ChangesRequired: changesRequired,
 	}

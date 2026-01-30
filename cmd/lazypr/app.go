@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -60,6 +61,11 @@ type Model struct {
 
 	// Help screen
 	showHelp bool
+
+	// List filter
+	filterMode  bool            // Whether filter input is active
+	filterInput textinput.Model // Filter text input
+	filterText  string          // Current filter text (applied)
 
 	// Checks modal
 	showChecksModal    bool
@@ -163,6 +169,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle filter mode
+	if m.filterMode {
+		return m.updateFilterMode(msg)
+	}
+
 	// Handle input modal mode
 	if m.inputMode {
 		return m.updateInputMode(msg)
@@ -199,20 +210,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		case "q", "ctrl+c":
+			return m, tea.Quit
+
+		case "esc":
+			// If filter is active, clear it first
+			if m.filterText != "" {
+				m.filterText = ""
+				m.cursor = 0
+				m.listOffset = 0
+				m.updateDetailViewport()
+				return m, nil
+			}
 			return m, tea.Quit
 
 		// Navigation in list
 		case "j", "down":
-			if m.focusedPane == paneList && len(m.prs) > 0 {
-				m.cursor = (m.cursor + 1) % len(m.prs)
+			prs := m.filteredPRs()
+			if m.focusedPane == paneList && len(prs) > 0 {
+				m.cursor = (m.cursor + 1) % len(prs)
 				m.ensureCursorVisible()
 				m.updateDetailViewport()
 			}
 
 		case "k", "up":
-			if m.focusedPane == paneList && len(m.prs) > 0 {
-				m.cursor = (m.cursor - 1 + len(m.prs)) % len(m.prs)
+			prs := m.filteredPRs()
+			if m.focusedPane == paneList && len(prs) > 0 {
+				m.cursor = (m.cursor - 1 + len(prs)) % len(prs)
 				m.ensureCursorVisible()
 				m.updateDetailViewport()
 			}
@@ -376,6 +400,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = true
 			return m, nil
 
+		case "/":
+			// Enter filter mode
+			m.filterMode = true
+			m.filterInput = textinput.New()
+			m.filterInput.Placeholder = "Filter PRs..."
+			m.filterInput.Focus()
+			m.filterInput.CharLimit = 50
+			m.filterInput.Width = 30
+			m.filterInput.SetValue(m.filterText)
+			return m, textinput.Blink
+
 		}
 
 		// Detail pane navigation when focused
@@ -487,6 +522,39 @@ func (m Model) listPaneDimensions() (int, int) {
 		contentHeight = 1
 	}
 	return contentWidth, contentHeight
+}
+
+func (m Model) updateFilterMode(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "enter":
+			// Apply filter and exit filter mode
+			m.filterText = m.filterInput.Value()
+			m.filterMode = false
+			m.cursor = 0
+			m.listOffset = 0
+			m.updateDetailViewport()
+			return m, nil
+		case "esc":
+			// Cancel filter editing (keep existing filter)
+			m.filterMode = false
+			return m, nil
+		case "ctrl+c":
+			// Clear filter and exit
+			m.filterText = ""
+			m.filterMode = false
+			m.cursor = 0
+			m.listOffset = 0
+			m.updateDetailViewport()
+			return m, nil
+		}
+	}
+
+	// Let textinput handle all other input
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	return m, cmd
 }
 
 func (m Model) updateInputMode(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -736,6 +804,24 @@ func (m Model) getSelectedPRs() []lazypr.PRDetail {
 	return nil
 }
 
+// filteredPRs returns PRs matching the current filter
+func (m Model) filteredPRs() []lazypr.PRDetail {
+	if m.filterText == "" {
+		return m.prs
+	}
+	filter := strings.ToLower(m.filterText)
+	var result []lazypr.PRDetail
+	for _, pr := range m.prs {
+		// Match against title, author, or PR number
+		if strings.Contains(strings.ToLower(pr.Title), filter) ||
+			strings.Contains(strings.ToLower(pr.Author), filter) ||
+			strings.Contains(fmt.Sprintf("%d", pr.Number), filter) {
+			result = append(result, pr)
+		}
+	}
+	return result
+}
+
 func (m Model) openInBrowser() tea.Cmd {
 	return func() tea.Msg {
 		if m.cursor >= 0 && m.cursor < len(m.prs) {
@@ -870,6 +956,10 @@ func (m Model) renderHelpScreen() string {
 	lines = append(lines, fmt.Sprintf("  %s       %s", keyStyle.Render("1/2"), descStyle.Render("Focus list / detail pane")))
 	lines = append(lines, fmt.Sprintf("  %s  %s", keyStyle.Render("PgUp/PgDn"), descStyle.Render("Scroll detail pane (works from list)")))
 	lines = append(lines, fmt.Sprintf("  %s       %s", keyStyle.Render("g/G"), descStyle.Render("Go to top / bottom of detail")))
+	lines = append(lines, "")
+	lines = append(lines, sectionStyle.Render("Filter"))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("/"), descStyle.Render("Filter PRs by title/author/number")))
+	lines = append(lines, fmt.Sprintf("  %s       %s", keyStyle.Render("Esc"), descStyle.Render("Clear filter (when active)")))
 	lines = append(lines, "")
 	lines = append(lines, sectionStyle.Render("Selection"))
 	lines = append(lines, fmt.Sprintf("  %s     %s", keyStyle.Render("Space"), descStyle.Render("Toggle selection on current PR")))
@@ -1085,11 +1175,41 @@ func (m Model) renderContent() string {
 }
 
 func (m Model) renderListPane(width, height int) string {
-	if len(m.prs) == 0 {
+	var output []string
+
+	// Get filtered PRs
+	prs := m.filteredPRs()
+
+	// Show PR count header
+	var countText string
+	if m.filterText != "" {
+		countText = fmt.Sprintf("%d/%d PRs", len(prs), len(m.prs))
+	} else {
+		countText = fmt.Sprintf("%d PRs", len(prs))
+	}
+	output = append(output, m.styles.PRAuthor.Render(countText))
+	height-- // Reduce available height
+
+	// Show filter bar if filtering or filter is active
+	if m.filterMode {
+		filterBar := fmt.Sprintf("/ %s", m.filterInput.View())
+		output = append(output, m.styles.PRNumber.Render(filterBar))
+		height-- // Reduce available height
+	} else if m.filterText != "" {
+		filterBar := fmt.Sprintf("Filter: %s", m.filterText)
+		output = append(output, m.styles.PRAuthor.Render(filterBar))
+		height-- // Reduce available height
+	}
+
+	if len(prs) == 0 {
 		if m.loading {
-			return "Loading PRs..."
+			output = append(output, "Loading PRs...")
+		} else if m.filterText != "" {
+			output = append(output, "No PRs match filter")
+		} else {
+			output = append(output, "No PRs to display")
 		}
-		return "No PRs to display"
+		return strings.Join(output, "\n")
 	}
 
 	// Calculate visible range based on listOffset
@@ -1101,13 +1221,12 @@ func (m Model) renderListPane(width, height int) string {
 
 	startIdx := m.listOffset
 	endIdx := startIdx + visibleItems
-	if endIdx > len(m.prs) {
-		endIdx = len(m.prs)
+	if endIdx > len(prs) {
+		endIdx = len(prs)
 	}
 
-	var lines []string
 	for i := startIdx; i < endIdx; i++ {
-		pr := m.prs[i]
+		pr := prs[i]
 
 		// Selection marker
 		selectMarker := " "
@@ -1159,22 +1278,71 @@ func (m Model) renderListPane(width, height int) string {
 			line = m.styles.PRItem.Width(width).Render(line)
 		}
 
-		lines = append(lines, line)
+		output = append(output, line)
 	}
 
-	return strings.Join(lines, "\n")
+	return strings.Join(output, "\n")
 }
 
 func (m Model) renderDetailPane(width, height int) string {
 	return m.detailViewport.View()
 }
 
+// stateIconAndStyle returns icon and style for PR state
+func (m Model) stateIconAndStyle(state string) (string, lipgloss.Style) {
+	switch state {
+	case "OPEN":
+		return "●", m.styles.StatusSuccess
+	case "MERGED":
+		return lazypr.IconMerged, m.styles.StatusMerged
+	case "CLOSED":
+		return lazypr.IconClosed, m.styles.StatusError
+	default:
+		return "○", m.styles.StatusUnknown
+	}
+}
+
+// mergeableIconAndStyle returns icon and style for mergeable status
+func (m Model) mergeableIconAndStyle(pr lazypr.PRDetail) (string, lipgloss.Style) {
+	if pr.State == "MERGED" {
+		return lazypr.IconMerged, m.styles.StatusMerged
+	}
+	if pr.State == "CLOSED" {
+		return lazypr.IconClosed, m.styles.StatusError
+	}
+	switch pr.Mergeable {
+	case "MERGEABLE":
+		return lazypr.IconSuccess, m.styles.StatusSuccess
+	case "CONFLICTING":
+		return lazypr.IconConflict, m.styles.StatusError
+	case "UNKNOWN":
+		return lazypr.IconPending, m.styles.StatusPending
+	default:
+		return lazypr.IconUnknown, m.styles.StatusUnknown
+	}
+}
+
+// ciStatusIconAndStyle returns icon and style for CI status
+func (m Model) ciStatusIconAndStyle(status string) (string, lipgloss.Style) {
+	switch status {
+	case "SUCCESS":
+		return lazypr.IconSuccess, m.styles.StatusSuccess
+	case "FAILURE", "ERROR":
+		return lazypr.IconFailure, m.styles.StatusError
+	case "PENDING":
+		return lazypr.IconPending, m.styles.StatusPending
+	default:
+		return lazypr.IconUnknown, m.styles.StatusUnknown
+	}
+}
+
 func (m Model) renderDetailContent() string {
-	if len(m.prs) == 0 || m.cursor >= len(m.prs) {
+	prs := m.filteredPRs()
+	if len(prs) == 0 || m.cursor >= len(prs) {
 		return "Select a PR to view details"
 	}
 
-	pr := m.prs[m.cursor]
+	pr := prs[m.cursor]
 	width, _ := m.detailPaneDimensions()
 
 	var sections []string
@@ -1186,17 +1354,34 @@ func (m Model) renderDetailContent() string {
 	// Separator
 	sections = append(sections, strings.Repeat("─", width))
 
-	// Metadata
-	meta := []string{
-		fmt.Sprintf("Author: @%s", pr.Author),
-		fmt.Sprintf("State: %s", pr.State),
-		fmt.Sprintf("Created: %s", pr.CreatedAt.Format("2006-01-02")),
-		fmt.Sprintf("Base: %s <- %s", pr.BaseRef, pr.HeadRef),
-		fmt.Sprintf("Mergeable: %s %s", pr.MergeableIcon(), pr.MergeableText()),
-	}
+	// Metadata with colors
+	var meta []string
+
+	// Author
+	meta = append(meta, fmt.Sprintf("Author: %s", m.styles.PRNumber.Render("@"+pr.Author)))
+
+	// State with color
+	stateIcon, stateStyle := m.stateIconAndStyle(pr.State)
+	meta = append(meta, fmt.Sprintf("State: %s %s", stateStyle.Render(stateIcon), stateStyle.Render(pr.State)))
+
+	// Created date
+	meta = append(meta, fmt.Sprintf("Created: %s", m.styles.PRAuthor.Render(pr.CreatedAt.Format("2006-01-02"))))
+
+	// Base/Head branches
+	meta = append(meta, fmt.Sprintf("Base: %s <- %s",
+		m.styles.PRNumber.Render(pr.BaseRef),
+		m.styles.CommitSHA.Render(pr.HeadRef)))
+
+	// Mergeable with icon and color
+	mergeIcon, mergeStyle := m.mergeableIconAndStyle(pr)
+	meta = append(meta, fmt.Sprintf("Mergeable: %s %s", mergeStyle.Render(mergeIcon), mergeStyle.Render(pr.MergeableText())))
+
+	// CI Status with icon and color
 	if pr.StatusState != "" {
-		meta = append(meta, fmt.Sprintf("CI Status: %s", pr.StatusState))
+		ciIcon, ciStyle := m.ciStatusIconAndStyle(pr.EffectiveStatus())
+		meta = append(meta, fmt.Sprintf("CI Status: %s %s", ciStyle.Render(ciIcon), ciStyle.Render(pr.EffectiveStatus())))
 	}
+
 	sections = append(sections, m.styles.SectionBody.Render(strings.Join(meta, "\n")))
 
 	// Labels
@@ -1288,9 +1473,41 @@ func (m Model) renderDetailContent() string {
 				icon = lazypr.IconPending
 				style = m.styles.StatusPending
 			}
-			reviews = append(reviews, style.Render(icon)+" "+r.Author+" - "+r.State)
+			reviewLine := style.Render(icon) + " " + r.Author + " - " + r.State
+			if r.Body != "" {
+				// Truncate long comments and show first line
+				body := r.Body
+				if idx := strings.Index(body, "\n"); idx != -1 {
+					body = body[:idx]
+				}
+				if len(body) > 80 {
+					body = body[:77] + "..."
+				}
+				reviewLine += "\n    " + m.styles.PRAuthor.Render(body)
+			}
+			reviews = append(reviews, reviewLine)
 		}
 		sections = append(sections, m.styles.SectionBody.Render(strings.Join(reviews, "\n")))
+	}
+
+	// Comments
+	if len(pr.Comments) > 0 {
+		sections = append(sections, "")
+		sections = append(sections, m.styles.SectionTitle.Render(fmt.Sprintf("Comments (%d)", len(pr.Comments))))
+		var comments []string
+		for _, c := range pr.Comments {
+			// Truncate long comments and show first line
+			body := c.Body
+			if idx := strings.Index(body, "\n"); idx != -1 {
+				body = body[:idx]
+			}
+			if len(body) > 80 {
+				body = body[:77] + "..."
+			}
+			commentLine := fmt.Sprintf("@%s: %s", c.Author, body)
+			comments = append(comments, m.styles.PRAuthor.Render(commentLine))
+		}
+		sections = append(sections, m.styles.SectionBody.Render(strings.Join(comments, "\n")))
 	}
 
 	return strings.Join(sections, "\n")
@@ -1318,7 +1535,7 @@ func (m Model) renderFooter() string {
 		hints = append(hints, fmt.Sprintf("[%d selected]", len(m.selected)))
 	}
 
-	hints = append(hints, "a: approve", "c: comment", "d: diff", "l: logs", "o: open", "?: help")
+	hints = append(hints, "/: filter", "a: approve", "c: comment", "d: diff", "l: logs", "o: open", "?: help")
 
 	footer := strings.Join(hints, "  ")
 	return m.styles.Footer.Width(m.width).Render(footer)
