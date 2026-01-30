@@ -10,13 +10,14 @@ A comprehensive GitHub Pull Request management tool written in Go, consolidating
 - **Batch Commenting**: Comment on multiple pull requests at once using fzf multi-select
 - **Workflow Restart**: Automatically restart failed GitHub Actions workflows
 - **Conflict Resolution**: Interactive merge conflict resolution with worktree support
-- **Template Caching**: Templates are cached for one week to speed up operations
+- **Template Caching**: Templates are cached daily to speed up operations
+- **Review Context**: Gather PR metadata, checks, comments, and diffs for reviews
 
 ## Installation
 
 ```bash
 # Install latest version
-go install go.sbr.pm/x/cmd/gh-pr/cmd/gh-pr@latest
+go install go.sbr.pm/x/cmd/gh-pr@latest
 
 # Or build from source
 go build -o gh-pr ./cmd/gh-pr
@@ -65,6 +66,11 @@ gh-pr create \
 - `-a, --assignee`: Assign users (comma-separated)
 - `-l, --label`: Add labels (comma-separated)
 - `--refresh`: Bypass template cache and search again
+- `--allow-main`: Allow creating PR from main/master branch
+- `--no-push`: Skip pushing branch to remote
+- `--require-signed`: Require commits to be GPG signed
+- `--branch`: Create and switch to a new branch before creating PR
+- `-f, --force`: Force push (use with caution)
 
 **Template Discovery:**
 
@@ -72,6 +78,34 @@ Templates are automatically discovered from:
 - `.github/PULL_REQUEST_TEMPLATE.md`
 - `.github/PULL_REQUEST_TEMPLATE/`
 - `docs/PULL_REQUEST_TEMPLATE.md`
+
+### `gh-pr review`
+
+Gather all context needed to review a pull request.
+
+```bash
+# Review current PR (default repo/branch context)
+gh-pr review
+
+# Review a specific PR by number
+gh-pr review 123
+
+# Review a PR by URL
+gh-pr review https://github.com/owner/repo/pull/123
+
+# Include full diff output
+gh-pr review 123 --diff
+
+# Output as JSON (or LLM-friendly markdown)
+gh-pr review 123 --json
+gh-pr review 123 --llm
+```
+
+**Options:**
+- `--diff`: Include full diff output
+- `-c, --comments`: Include review comments (default: true)
+- `--json`: Output as JSON
+- `--llm`: Format output for LLM consumption (markdown)
 
 ### `gh-pr comment`
 
@@ -437,7 +471,7 @@ The `--check-upstream` flag uses `git cherry` to detect if all commits from a br
 
 ## Template Caching
 
-Templates are cached for **7 days** (one week) by default. This significantly speeds up operations when working with the same repository.
+Templates are cached daily by default. This significantly speeds up operations when working with the same repository.
 
 **Cache Location:** `~/.cache/gh-pr/`
 

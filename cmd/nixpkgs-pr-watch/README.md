@@ -1,6 +1,6 @@
 # nixpkgs-pr-watch
 
-Filter NixOS/nixpkgs pull requests based on packages and modules used in your NixOS configurations.
+Filter NixOS/nixpkgs pull requests based on packages and configured services in your NixOS configurations.
 
 ## Overview
 
@@ -12,7 +12,7 @@ Filter NixOS/nixpkgs pull requests based on packages and modules used in your Ni
 - **Smart Matching**: Matches PRs based on:
   - File paths (high confidence): `pkgs/by-name/gi/git/package.nix` → git
   - PR titles (medium confidence): "git: 2.43.0 -> 2.44.0" → git
-  - Module paths (high confidence): NixOS/home-manager modules
+  - Module paths (high confidence): NixOS services inferred from configured systemd services
 - **Confidence Scoring**: Filter by confidence level (high, medium, low)
 - **Status Highlighting**: PRs with merge conflicts or build failures are visually highlighted
 - **Flexible Filtering**: Filter by author, base branch, or confidence level
@@ -169,6 +169,7 @@ HIGH CONFIDENCE MATCHES (2)
 3. **Matching Algorithm**:
    - **High confidence**: File path matches package name (`pkgs/by-name/gi/git/package.nix` → git)
    - **Medium confidence**: PR title contains package name ("git: 2.43.0 -> 2.44.0" → git)
+   - **Module paths**: Derived from configured systemd services (e.g., `nixos/modules/services/docker`)
    - **Low confidence**: Heuristic matches (currently disabled)
 
 4. **Scoring**:
@@ -320,14 +321,13 @@ nixpkgs-pr-watch --flake /path/to/nixos/config
 
 Caches are stored in `~/.cache/nixpkgs-pr-watch/`:
 - `<hostname>-deps.json`: Dependency cache (TTL: 24h)
-- `nixpkgs-prs-<limit>.json`: PR cache (TTL: 6h)
-
-Cache is automatically invalidated when `flake.lock` is modified.
+- `nixpkgs-prs-data.json`: PR cache data (TTL: 6h)
+- `nixpkgs-prs-metadata.json`: PR cache metadata (TTL: 6h)
 
 ## Limitations
 
 - Currently only extracts `environment.systemPackages` and `home.packages`
-- Module detection not yet implemented (Phase 2)
+- Module detection is inferred from systemd services; home-manager modules not yet extracted
 - Doesn't detect transitive dependencies
 - Title matching can have false positives with short package names
 
@@ -342,14 +342,12 @@ Cache is automatically invalidated when `flake.lock` is modified.
 - [x] Caching
 
 ### Phase 2
-- [ ] Module path matching
-- [ ] Service-to-module mapping
+- [ ] Home-manager module extraction
 - [ ] Enhanced confidence scoring
 - [ ] Better title matching (word boundaries)
 
 ### Phase 3
 - [ ] Label filtering
-- [ ] Flake.lock-based cache invalidation
 - [ ] Configuration file support
 - [ ] Interactive mode (fzf)
 
