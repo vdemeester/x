@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -233,6 +234,8 @@ func runWatch(out *output.Writer, flags watchFlags) error {
 	switch flags.outputFormat {
 	case "json":
 		return outputJSON(filtered, merged, hostsToAnalyze)
+	case "urls":
+		return outputURLs(os.Stdout, filtered)
 	default:
 		return outputTerminal(out, filtered, merged, hostsToAnalyze, flags)
 	}
@@ -271,6 +274,15 @@ func outputJSON(results []pr.MatchResult, deps *deps.Dependencies, hosts []strin
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(output)
+}
+
+// outputURLs writes PR URLs one per line to the given writer.
+// This format is designed for piping to other tools like lazypr.
+func outputURLs(w io.Writer, results []pr.MatchResult) error {
+	for _, r := range results {
+		fmt.Fprintln(w, r.PR.URL)
+	}
+	return nil
 }
 
 func outputTerminal(out *output.Writer, results []pr.MatchResult, deps *deps.Dependencies, hosts []string, flags watchFlags) error {
@@ -342,7 +354,7 @@ func printMatch(out *output.Writer, r pr.MatchResult, compact bool) {
 		if statusIndicators != "" {
 			titleLine = fmt.Sprintf("%s %s", titleLine, statusIndicators)
 		}
-		out.Success(titleLine)
+		out.Success("%s", titleLine)
 		out.Println("  %s by @%s - %s", formatMatches(r.Matches), r.PR.Author, r.PR.URL)
 	} else {
 		// Full mode: include date and all details
@@ -350,7 +362,7 @@ func printMatch(out *output.Writer, r pr.MatchResult, compact bool) {
 		if statusIndicators != "" {
 			titleLine = fmt.Sprintf("%s %s", titleLine, statusIndicators)
 		}
-		out.Success(titleLine)
+		out.Success("%s", titleLine)
 		out.Println("  → Matches: %s", formatMatches(r.Matches))
 		if len(r.PR.Files) > 0 {
 			out.Println("  │ Files: %s", formatFiles(r.PR.Files))
