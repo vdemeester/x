@@ -66,7 +66,7 @@ to your system. Helps track updates and security fixes for packages you use.`,
 	cmd.Flags().BoolVar(&allHosts, "all-hosts", false, "Analyze all hosts in flake")
 	cmd.Flags().StringVar(&flakePath, "flake", ".", "Path to flake directory")
 	cmd.Flags().IntVar(&limit, "limit", 500, "Maximum number of PRs to fetch")
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "terminal", "Output format (terminal, json)")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "terminal", "Output format (terminal, json, urls)")
 	cmd.Flags().StringVar(&minConfidence, "min-confidence", "medium", "Minimum confidence level (high, medium, low)")
 	cmd.Flags().StringVar(&user, "user", "", "Filter PRs by author username (e.g., r-ryantm)")
 	cmd.Flags().StringVar(&baseBranch, "base-branch", "master", "Filter PRs by base branch (default: master)")
