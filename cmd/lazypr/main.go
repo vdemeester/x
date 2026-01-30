@@ -27,7 +27,7 @@ func main() {
 }
 
 func init() {
-	rootCmd.Flags().IntVarP(&limit, "limit", "l", 30, "Maximum number of PRs to fetch when loading from a repo")
+	rootCmd.Flags().IntVarP(&limit, "limit", "l", 100, "Maximum number of PRs to fetch when loading from a repo")
 	rootCmd.Flags().StringArrayVarP(&labels, "label", "L", nil, "Filter by label (can be repeated)")
 	rootCmd.Flags().StringVarP(&milestone, "milestone", "m", "", "Filter by milestone")
 	rootCmd.Flags().StringVarP(&author, "author", "a", "", "Filter by author")
