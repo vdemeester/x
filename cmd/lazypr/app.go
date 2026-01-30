@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -716,20 +717,63 @@ func (m Model) executeAction(action lazypr.Action, prs []lazypr.PRDetail) tea.Cm
 	// Substitute placeholders in command
 	cmd := lazypr.SubstituteBatchPlaceholders(action.Command, prs)
 
+	// Log the command being executed
+	logFile, _ := os.OpenFile("/tmp/lazypr-actions.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if logFile != nil {
+		fmt.Fprintf(logFile, "[%s] Action: %s\n", time.Now().Format(time.RFC3339), action.Name)
+		fmt.Fprintf(logFile, "[%s] Command: %s\n", time.Now().Format(time.RFC3339), cmd)
+		logFile.Close()
+	}
+
 	if action.Interactive {
 		// Interactive: suspend TUI and run with full terminal access
-		c := exec.Command("sh", "-c", cmd)
+		c := exec.Command("bash", "-c", cmd)
 		return tea.ExecProcess(c, func(err error) tea.Msg {
+			if err != nil {
+				if logFile, _ := os.OpenFile("/tmp/lazypr-actions.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); logFile != nil {
+					fmt.Fprintf(logFile, "[%s] Interactive error: %v\n", time.Now().Format(time.RFC3339), err)
+					logFile.Close()
+				}
+			}
 			return execDoneMsg{}
 		})
 	}
 
 	// Non-interactive: run in background
 	return func() tea.Msg {
-		c := exec.Command("sh", "-c", cmd)
-		c.Stdout = nil
-		c.Stderr = nil
-		_ = c.Run()
+		c := exec.Command("bash", "-c", cmd)
+		var stdout, stderr strings.Builder
+		c.Stdout = &stdout
+		c.Stderr = &stderr
+		err := c.Run()
+
+		// Log the result
+		if logFile, _ := os.OpenFile("/tmp/lazypr-actions.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); logFile != nil {
+			if err != nil {
+				fmt.Fprintf(logFile, "[%s] Error: %v\n", time.Now().Format(time.RFC3339), err)
+			}
+			if stdout.Len() > 0 {
+				fmt.Fprintf(logFile, "[%s] Stdout: %s\n", time.Now().Format(time.RFC3339), stdout.String())
+			}
+			if stderr.Len() > 0 {
+				fmt.Fprintf(logFile, "[%s] Stderr: %s\n", time.Now().Format(time.RFC3339), stderr.String())
+			}
+			fmt.Fprintf(logFile, "[%s] Exit code: %d\n", time.Now().Format(time.RFC3339), c.ProcessState.ExitCode())
+			logFile.Close()
+		}
+
+		if err != nil {
+			errMsg := err.Error()
+			if stderr.Len() > 0 {
+				// Show first line of stderr
+				firstLine := strings.Split(stderr.String(), "\n")[0]
+				if len(firstLine) > 50 {
+					firstLine = firstLine[:47] + "..."
+				}
+				errMsg = firstLine
+			}
+			return actionResult{success: false, message: fmt.Sprintf("Failed: %s - %s", action.Name, errMsg)}
+		}
 		return actionResult{success: true, message: fmt.Sprintf("Executed: %s", action.Name)}
 	}
 }
