@@ -72,6 +72,11 @@ type Model struct {
 	checksModalCursor  int
 	checksModalChecks  []lazypr.Check // Filtered checks to show
 
+	// Actions modal
+	showActionsModal   bool
+	actionsModalCursor int
+	config             *lazypr.Config // User configuration with custom actions
+
 	// Styles
 	styles Styles
 }
@@ -91,6 +96,7 @@ type execDoneMsg struct{}
 
 // NewModel creates a new model with the given PR references.
 func NewModel(refs []lazypr.PRRef) Model {
+	cfg, _ := lazypr.LoadConfig(lazypr.DefaultConfigPath())
 	return Model{
 		refs:        refs,
 		cursor:      0,
@@ -98,6 +104,7 @@ func NewModel(refs []lazypr.PRRef) Model {
 		focusedPane: paneList,
 		loading:     true,
 		styles:      NewStyles(DefaultTheme()),
+		config:      cfg,
 	}
 }
 
@@ -108,6 +115,7 @@ func NewRepoModel(repo lazypr.RepoRef, limit int) Model {
 
 // NewRepoModelWithFilter creates a new model with filter options.
 func NewRepoModelWithFilter(repo lazypr.RepoRef, limit int, filter lazypr.FilterOptions) Model {
+	cfg, _ := lazypr.LoadConfig(lazypr.DefaultConfigPath())
 	return Model{
 		repo:        &repo,
 		repoLimit:   limit,
@@ -117,6 +125,7 @@ func NewRepoModelWithFilter(repo lazypr.RepoRef, limit int, filter lazypr.Filter
 		focusedPane: paneList,
 		loading:     true,
 		styles:      NewStyles(DefaultTheme()),
+		config:      cfg,
 	}
 }
 
@@ -182,6 +191,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle checks modal
 	if m.showChecksModal {
 		return m.updateChecksModal(msg)
+	}
+
+	// Handle actions modal
+	if m.showActionsModal {
+		return m.updateActionsModal(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -330,6 +344,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y":
 			if len(m.prs) > 0 && m.cursor < len(m.prs) {
 				return m, copyToClipboard(m.prs[m.cursor].URL)
+			}
+
+		case "x":
+			// Show custom actions modal
+			if m.config != nil && len(m.config.Actions) > 0 && len(m.prs) > 0 {
+				m.showActionsModal = true
+				m.actionsModalCursor = 0
+				return m, nil
+			} else if m.config == nil || len(m.config.Actions) == 0 {
+				m.statusMsg = "No custom actions configured"
+				m.statusTime = 30
 			}
 
 		case "a":
@@ -653,6 +678,62 @@ func (m Model) updateChecksModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateActionsModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.config == nil {
+		return m, nil
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j", "down":
+			if m.actionsModalCursor < len(m.config.Actions)-1 {
+				m.actionsModalCursor++
+			}
+		case "k", "up":
+			if m.actionsModalCursor > 0 {
+				m.actionsModalCursor--
+			}
+		case "enter":
+			// Execute the selected action
+			if m.actionsModalCursor < len(m.config.Actions) {
+				action := m.config.Actions[m.actionsModalCursor]
+				m.showActionsModal = false
+				prs := m.getSelectedPRs()
+				if len(prs) > 0 {
+					return m, m.executeAction(action, prs)
+				}
+			}
+		case "esc", "q", "x":
+			m.showActionsModal = false
+			return m, tea.ClearScreen
+		}
+	}
+	return m, nil
+}
+
+func (m Model) executeAction(action lazypr.Action, prs []lazypr.PRDetail) tea.Cmd {
+	// Substitute placeholders in command
+	cmd := lazypr.SubstituteBatchPlaceholders(action.Command, prs)
+
+	if action.Interactive {
+		// Interactive: suspend TUI and run with full terminal access
+		c := exec.Command("sh", "-c", cmd)
+		return tea.ExecProcess(c, func(err error) tea.Msg {
+			return execDoneMsg{}
+		})
+	}
+
+	// Non-interactive: run in background
+	return func() tea.Msg {
+		c := exec.Command("sh", "-c", cmd)
+		c.Stdout = nil
+		c.Stderr = nil
+		_ = c.Run()
+		return actionResult{success: true, message: fmt.Sprintf("Executed: %s", action.Name)}
+	}
+}
+
 // parseGitHubActionsURL extracts run ID and job ID from a GitHub Actions URL.
 // URL format: https://github.com/owner/repo/actions/runs/<run-id>/job/<job-id>
 func parseGitHubActionsURL(url string) (runID, jobID string, ok bool) {
@@ -928,6 +1009,12 @@ func (m Model) View() string {
 		view = m.overlayModal(view, modal)
 	}
 
+	// Overlay actions modal if active
+	if m.showActionsModal {
+		modal := m.renderActionsModal()
+		view = m.overlayModal(view, modal)
+	}
+
 	return view
 }
 
@@ -973,6 +1060,7 @@ func (m Model) renderHelpScreen() string {
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("l"), descStyle.Render("View CI check logs (Enter=view, e=AI explain)")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("o"), descStyle.Render("Open PR in browser")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("y"), descStyle.Render("Copy PR URL to clipboard")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("x"), descStyle.Render("Custom actions menu")))
 	lines = append(lines, fmt.Sprintf("  %s         %s", keyStyle.Render("R"), descStyle.Render("Refresh PR data")))
 	lines = append(lines, "")
 	lines = append(lines, sectionStyle.Render("General"))
@@ -1079,6 +1167,57 @@ func (m Model) renderChecksModal() string {
 
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().Faint(true).Render("j/k: navigate  Enter: view logs  e: AI explain  Esc: close"))
+
+	return boxStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) renderActionsModal() string {
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.styles.Theme.Accent).
+		Padding(1, 2).
+		Width(60)
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(m.styles.Theme.Accent).
+		Bold(true)
+
+	var lines []string
+
+	// Show title with selection count
+	prs := m.getSelectedPRs()
+	if len(prs) > 1 {
+		lines = append(lines, titleStyle.Render(fmt.Sprintf("Custom Actions (%d PRs)", len(prs))))
+	} else if len(prs) == 1 {
+		lines = append(lines, titleStyle.Render(fmt.Sprintf("Custom Actions - PR #%d", prs[0].Number)))
+	} else {
+		lines = append(lines, titleStyle.Render("Custom Actions"))
+	}
+	lines = append(lines, "")
+
+	if m.config == nil || len(m.config.Actions) == 0 {
+		lines = append(lines, "No custom actions configured")
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Faint(true).Render("Configure actions in ~/.config/lazypr/config.toml"))
+	} else {
+		for i, action := range m.config.Actions {
+			var interactiveHint string
+			if action.Interactive {
+				interactiveHint = " [interactive]"
+			}
+			line := fmt.Sprintf("%s%s", action.Name, interactiveHint)
+
+			if i == m.actionsModalCursor {
+				line = m.styles.PRItemSelected.Render("▸ " + line)
+			} else {
+				line = "  " + line
+			}
+			lines = append(lines, line)
+		}
+
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Faint(true).Render("j/k: navigate  Enter: execute  Esc: close"))
+	}
 
 	return boxStyle.Render(strings.Join(lines, "\n"))
 }
