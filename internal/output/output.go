@@ -44,10 +44,10 @@ func (w *Writer) colorize(color, text string) string {
 	return color + text + Reset
 }
 
-// Info prints an informational message
+// Info prints an informational message to stderr
 func (w *Writer) Info(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintln(w.out, w.colorize(Blue, msg))
+	fmt.Fprintln(w.err, w.colorize(Blue, msg))
 }
 
 // Success prints a success message
