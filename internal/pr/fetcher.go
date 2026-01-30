@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -134,7 +135,7 @@ func (f *Fetcher) FetchNixpkgsPRsWithCursor(limit int, afterCursor string, baseB
 		// Apply rate limiting with exponential backoff
 		delay := f.rateLimiter.Wait()
 		if delay > 0 {
-			fmt.Printf("⏱️  Rate limiting: waiting %v before batch %d...\n", delay.Round(time.Millisecond), batchNum)
+			fmt.Fprintf(os.Stderr, "⏱️  Rate limiting: waiting %v before batch %d...\n", delay.Round(time.Millisecond), batchNum)
 		}
 
 		batchSize := remaining
@@ -181,8 +182,8 @@ func (f *Fetcher) fetchPRBatchWithRetry(limit int, afterCursor string, baseBranc
 		if attempt < maxRetries {
 			// Exponential backoff: 1s, 2s, 4s
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			fmt.Printf("⚠️  GitHub API error (attempt %d/%d): %v\n", attempt, maxRetries, err)
-			fmt.Printf("   Retrying in %v...\n", backoff)
+			fmt.Fprintf(os.Stderr, "⚠️  GitHub API error (attempt %d/%d): %v\n", attempt, maxRetries, err)
+			fmt.Fprintf(os.Stderr, "   Retrying in %v...\n", backoff)
 			time.Sleep(backoff)
 		}
 	}
