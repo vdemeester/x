@@ -271,7 +271,7 @@ func (f *Fetcher) FetchRepoPRsWithFilter(repo RepoRef, limit int, filter FilterO
 							body
 						}
 					}
-					reviews(first: 50) {
+					reviews(first: 20) {
 						nodes {
 							author {
 								login
@@ -280,7 +280,7 @@ func (f *Fetcher) FetchRepoPRsWithFilter(repo RepoRef, limit int, filter FilterO
 							body
 						}
 					}
-					commits(last: 50) {
+					commits(last: 10) {
 						nodes {
 							commit {
 								oid
@@ -290,7 +290,7 @@ func (f *Fetcher) FetchRepoPRsWithFilter(repo RepoRef, limit int, filter FilterO
 								}
 								statusCheckRollup {
 									state
-									contexts(first: 100) {
+									contexts(first: 50) {
 										nodes {
 											__typename
 											... on CheckRun {
@@ -310,7 +310,7 @@ func (f *Fetcher) FetchRepoPRsWithFilter(repo RepoRef, limit int, filter FilterO
 							}
 						}
 					}
-					files(first: 100) {
+					files(first: 50) {
 						nodes {
 							path
 							additions

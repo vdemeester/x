@@ -1442,6 +1442,11 @@ func (m Model) renderListPane(width, height int) string {
 		status := statusStyle.Render(statusIcon)
 		author := m.styles.PRAuthor.Render(fmt.Sprintf("@%s", pr.Author))
 
+		// Format dates
+		createdDate := pr.CreatedAt.Format("2006-01-02")
+		updatedDate := pr.UpdatedAt.Format("2006-01-02")
+		dates := m.styles.PRAuthor.Render(fmt.Sprintf("↑%s ⟳%s", createdDate, updatedDate))
+
 		// Truncate title to fit
 		titleWidth := width - 17 // Account for selection marker
 		if titleWidth < 10 {
@@ -1452,7 +1457,7 @@ func (m Model) renderListPane(width, height int) string {
 			title = title[:titleWidth-1] + "..."
 		}
 
-		line := fmt.Sprintf("%s %s %s %s\n    %s", selectMarker, status, prNum, title, author)
+		line := fmt.Sprintf("%s %s %s %s\n    %s %s", selectMarker, status, prNum, title, author, dates)
 
 		// Apply selection style
 		if i == m.cursor {
@@ -1547,8 +1552,9 @@ func (m Model) renderDetailContent() string {
 	stateIcon, stateStyle := m.stateIconAndStyle(pr.State)
 	meta = append(meta, fmt.Sprintf("State: %s %s", stateStyle.Render(stateIcon), stateStyle.Render(pr.State)))
 
-	// Created date
-	meta = append(meta, fmt.Sprintf("Created: %s", m.styles.PRAuthor.Render(pr.CreatedAt.Format("2006-01-02"))))
+	// Created and updated dates
+	meta = append(meta, fmt.Sprintf("Created: %s", m.styles.PRAuthor.Render(pr.CreatedAt.Format("2006-01-02 15:04"))))
+	meta = append(meta, fmt.Sprintf("Updated: %s", m.styles.PRAuthor.Render(pr.UpdatedAt.Format("2006-01-02 15:04"))))
 
 	// Base/Head branches
 	meta = append(meta, fmt.Sprintf("Base: %s <- %s",
