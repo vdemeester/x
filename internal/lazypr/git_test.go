@@ -124,20 +124,27 @@ origin	https://github.com/tektoncd/pipeline.git (push)
 			want: RepoRef{Owner: "tektoncd", Repo: "pipeline"},
 		},
 		{
-			name: "multiple remotes prefers origin",
-			output: `upstream	git@github.com:other/repo.git (fetch)
-upstream	git@github.com:other/repo.git (push)
-origin	git@github.com:myuser/myrepo.git (fetch)
+			name: "upstream and origin prefers upstream",
+			output: `origin	git@github.com:myuser/myrepo.git (fetch)
+origin	git@github.com:myuser/myrepo.git (push)
+upstream	https://github.com/tektoncd/pipeline (fetch)
+upstream	https://github.com/tektoncd/pipeline (push)
+`,
+			want: RepoRef{Owner: "tektoncd", Repo: "pipeline"},
+		},
+		{
+			name: "origin only without upstream",
+			output: `origin	git@github.com:myuser/myrepo.git (fetch)
 origin	git@github.com:myuser/myrepo.git (push)
 `,
 			want: RepoRef{Owner: "myuser", Repo: "myrepo"},
 		},
 		{
 			name: "no origin falls back to first GitHub remote",
-			output: `upstream	git@github.com:tektoncd/pipeline.git (fetch)
-upstream	git@github.com:tektoncd/pipeline.git (push)
+			output: `myfork	git@github.com:myuser/myrepo.git (fetch)
+myfork	git@github.com:myuser/myrepo.git (push)
 `,
-			want: RepoRef{Owner: "tektoncd", Repo: "pipeline"},
+			want: RepoRef{Owner: "myuser", Repo: "myrepo"},
 		},
 		{
 			name:    "no GitHub remotes",

@@ -40,10 +40,13 @@ func ParseGitRemoteURL(url string) (RepoRef, bool) {
 }
 
 // ParseGitRemoteOutput parses the output of `git remote -v` and returns
-// the best GitHub remote. Prefers "origin" over other remotes.
+// the best GitHub remote. Prefers "upstream" over "origin" over other remotes,
+// since in fork-based workflows "upstream" points to the canonical repo where
+// PRs are submitted.
 func ParseGitRemoteOutput(output string) (RepoRef, error) {
 	lines := strings.Split(output, "\n")
 
+	var upstreamRef *RepoRef
 	var originRef *RepoRef
 	var firstGitHubRef *RepoRef
 
@@ -72,13 +75,18 @@ func ParseGitRemoteOutput(output string) (RepoRef, error) {
 			firstGitHubRef = &ref
 		}
 
-		// Prefer origin
-		if remoteName == "origin" {
+		switch remoteName {
+		case "upstream":
+			upstreamRef = &ref
+		case "origin":
 			originRef = &ref
 		}
 	}
 
-	// Return origin if found, otherwise first GitHub remote
+	// Prefer upstream (canonical repo) > origin > first GitHub remote
+	if upstreamRef != nil {
+		return *upstreamRef, nil
+	}
 	if originRef != nil {
 		return *originRef, nil
 	}
