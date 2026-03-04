@@ -46,6 +46,7 @@ Accepts references in multiple formats:
   - GitHub URL: https://github.com/owner/repo/pull/123
   - PR format: owner/repo#123
   - Repo format: owner/repo (loads open PRs from repo)
+  - Local path: /path/to/repo or ~/src/repo (detects from git remote)
 
 Examples:
   lazypr                                      # Auto-detect from git remote
@@ -56,7 +57,8 @@ Examples:
   lazypr -s all                               # Show all PRs (open + closed)
   lazypr tektoncd/pipeline#1234               # Load specific PR
   lazypr owner/repo#1 owner/repo#2            # Load multiple PRs
-  lazypr https://github.com/owner/repo/pull/1 # Load from URL`,
+  lazypr https://github.com/owner/repo/pull/1 # Load from URL
+  lazypr ~/src/tektoncd/pipeline              # Load from local repo path`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runLazyPR,
 }
@@ -69,6 +71,20 @@ func runLazyPR(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to detect repository: %w", err)
 		}
 		return runWithRepoRef(repo)
+	}
+
+	// Check if first arg is a directory path (local git repository)
+	if len(args) == 1 {
+		if info, err := os.Stat(args[0]); err == nil && info.IsDir() {
+			if err := os.Chdir(args[0]); err != nil {
+				return fmt.Errorf("failed to change to directory %s: %w", args[0], err)
+			}
+			repo, err := lazypr.DetectGitHubRemote()
+			if err != nil {
+				return fmt.Errorf("failed to detect repository in %s: %w", args[0], err)
+			}
+			return runWithRepoRef(repo)
+		}
 	}
 
 	// Check if first arg is a repo reference (no PR number)
